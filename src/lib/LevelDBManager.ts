@@ -193,7 +193,7 @@ class LevelDBManager {
         if (!this.isLoaded) throw new Error("Database not loaded yet");
 
         // Check if this is an index entry
-        const isIndex = key.includes("/by_");
+        const isIndex = key.startsWith("index/");
 
         // For index entries, we need to handle multiple values
         if (isIndex) {
