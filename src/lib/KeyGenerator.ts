@@ -8,7 +8,9 @@ class KeyGenerator {
 
     public next() {
         if (this.num >= MAX_KEY) {
-            throw new ConstraintError();
+            const errorMessage = `The key generator has reached its maximum value of ${MAX_KEY} and cannot generate new keys. Error Code: KEY_GEN_CONSTRAINT_ERR_001`;
+            console.error("ConstraintError:", errorMessage);
+            throw new ConstraintError(errorMessage);
         }
 
         this.num += 1;

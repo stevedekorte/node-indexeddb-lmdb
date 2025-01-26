@@ -130,7 +130,9 @@ class Index {
             if (this.unique) {
                 const existingRecord = this.records.get(indexKey);
                 if (existingRecord) {
-                    throw new ConstraintError();
+                    const errorMessage = `A record with the specified key "${indexKey}" already exists in the index, which violates the unique constraint. Key properties: ${JSON.stringify(newRecord.key)}. Error Code: IDX_CONSTRAINT_ERR_001`;
+                    console.error("ConstraintError:", errorMessage);
+                    throw new ConstraintError(errorMessage);
                 }
             }
             this.records.add({
@@ -142,7 +144,9 @@ class Index {
                 for (const individualIndexKey of indexKey) {
                     const existingRecord = this.records.get(individualIndexKey);
                     if (existingRecord) {
-                        throw new ConstraintError();
+                        const errorMessage = `A record with the specified key "${individualIndexKey}" already exists in the index, which violates the unique constraint. Key properties: ${JSON.stringify(newRecord.key)}. Error Code: IDX_CONSTRAINT_ERR_002`;
+                        console.error("ConstraintError:", errorMessage);
+                        throw new ConstraintError(errorMessage);
                     }
                 }
             }

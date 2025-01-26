@@ -75,7 +75,8 @@ class FDBIndex {
         }
 
         if (this.objectStore.indexNames.contains(name)) {
-            throw new ConstraintError();
+            const errorMessage = `An index with the name "${name}" already exists in the object store "${this.objectStore.name}". Index names must be unique within an object store.`;
+            throw new ConstraintError(errorMessage);
         }
 
         const oldName = this._name;

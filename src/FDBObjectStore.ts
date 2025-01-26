@@ -130,7 +130,9 @@ class FDBObjectStore {
         }
 
         if (this._rawObjectStore.rawDatabase.rawObjectStores.has(name)) {
-            throw new ConstraintError();
+            const errorMessage = `An object store with the name "${name}" already exists in the database. Error Code: OBJ_STORE_CONSTRAINT_ERR_001`;
+            console.error("ConstraintError:", errorMessage);
+            throw new ConstraintError(errorMessage);
         }
 
         const oldName = this._name;
@@ -420,7 +422,9 @@ class FDBObjectStore {
         confirmActiveTransaction(this);
 
         if (this.indexNames.contains(name)) {
-            throw new ConstraintError();
+            const errorMessage = `An index with the name "${name}" already exists in the object store "${this.name}". Index names must be unique within an object store. Error Code: IDX_CONSTRAINT_ERR_003`;
+            console.error("ConstraintError:", errorMessage);
+            throw new ConstraintError(errorMessage);
         }
 
         validateKeyPath(keyPath);

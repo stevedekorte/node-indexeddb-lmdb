@@ -221,7 +221,9 @@ class ObjectStore {
         const existingRecord = this.records.get(newRecord.key);
         if (existingRecord) {
             if (noOverwrite) {
-                throw new ConstraintError();
+                const errorMessage = `A record with the key "${newRecord.key}" already exists in the object store and cannot be overwritten due to the noOverwrite flag being set. Error Code: OBJ_STORE_CONSTRAINT_ERR_002`;
+                console.error("ConstraintError:", errorMessage);
+                throw new ConstraintError(errorMessage);
             }
             this.deleteRecord(newRecord.key, rollbackLog);
         }
