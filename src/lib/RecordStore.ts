@@ -9,9 +9,8 @@ import {
 import cmp from "./cmp.js";
 import { Key, Record } from "./types.js";
 import dbManager from "./LevelDBManager.js";
-
-export type RecordStoreType = "object" | "index";
-export const SEPARATOR = "_";
+export type RecordStoreType = "object" | "index" | "";
+import { PathUtils, SEPARATOR } from "./PathUtils.js";
 
 class RecordStore {
     private records: Record[] = [];
@@ -35,7 +34,9 @@ class RecordStore {
             this.type,
         );
         this.records = cachedRecords.sort((a, b) => cmp(a.key, b.key));
-
+        if (this.type === "index" && process.env.DB_VERBOSE === "1") {
+            console.log("INDEX_LOAD", this.keyPrefix, this.records);
+        }
         // Optionally, remove these records from dbManager's cache to save memory
         // cachedRecords.forEach(record => {
         //     dbManager.delete(this.keyPrefix + record.key.toString());
@@ -67,11 +68,25 @@ class RecordStore {
 
         this.records.splice(i, 0, newRecord);
 
-        // Write-through to dbManager
-        dbManager.set(
-            this.type + SEPARATOR + this.keyPrefix + newRecord.key.toString(),
-            newRecord,
+        // Write-through to dbManager - for index types, write all records with the same key
+        const key = PathUtils.createRecordStoreKeyPath(
+            this.keyPrefix,
+            this.type,
+            newRecord.key,
         );
+        if (this.type === "index") {
+            const sameKeyRecords = this.records.filter(
+                (r) => r.key === newRecord.key,
+            );
+            dbManager.set(
+                key,
+                sameKeyRecords.length === 1
+                    ? sameKeyRecords[0]
+                    : sameKeyRecords,
+            );
+        } else {
+            dbManager.set(key, newRecord);
+        }
     }
 
     public delete(key: Key) {
@@ -97,15 +112,43 @@ class RecordStore {
     public deleteByValue(key: Key) {
         const range = key instanceof FDBKeyRange ? key : FDBKeyRange.only(key);
         const deletedRecords: Record[] = [];
+
+        // Track which keys need to be updated in dbManager
+        const affectedKeys = new Set<string>();
+
         this.records = this.records.filter((record) => {
             const shouldDelete = range.includes(record.value);
             if (shouldDelete) {
                 deletedRecords.push(record);
-                // Write-through to dbManager
-                dbManager.delete(this.keyPrefix + record.key.toString());
+                // Track this key for dbManager update
+                const dbKey = PathUtils.createRecordStoreKeyPath(
+                    this.keyPrefix,
+                    this.type,
+                    record.key,
+                );
+                affectedKeys.add(dbKey);
             }
             return !shouldDelete;
         });
+
+        // Update dbManager for each affected key
+        for (const dbKey of affectedKeys) {
+            const remainingRecords = this.records.filter(
+                (r) => r.key.toString() === dbKey.split("/").pop(),
+            );
+
+            if (remainingRecords.length === 0) {
+                dbManager.delete(dbKey);
+            } else {
+                dbManager.set(
+                    dbKey,
+                    remainingRecords.length === 1
+                        ? remainingRecords[0]
+                        : remainingRecords,
+                );
+            }
+        }
+
         return deletedRecords;
     }
 
@@ -121,6 +164,9 @@ class RecordStore {
         return deletedRecords;
     }
     public values(range?: FDBKeyRange, direction: "next" | "prev" = "next") {
+        if (process.env.DB_VERBOSE === "1") {
+            console.log("values()", this.keyPrefix, this.records);
+        }
         return {
             [Symbol.iterator]: () => {
                 let i: number;
