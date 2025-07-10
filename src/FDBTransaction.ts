@@ -25,7 +25,7 @@ class FDBTransaction extends FakeEventTarget {
     public _started = false;
     public _rollbackLog: RollbackLog = [];
     public _objectStoresCache: Map<string, FDBObjectStore> = new Map();
-    private _lmdbTxnId: string;
+    public _lmdbTxnId: string;
     private _requestQueue: FDBRequest[] = [];
     private _currentRequestIndex = 0;
     private _requestResolvers: Map<FDBRequest, () => void> = new Map();
@@ -234,7 +234,7 @@ class FDBTransaction extends FakeEventTarget {
     private _checkComplete() {
         // Only auto-commit if explicitly in committing state
         // Normal transactions should only commit when explicitly told to or when scope exits
-        if (this._state === "committing" && this._state !== "finished") {
+        if (this._state === "committing") {
             this._state = "finished";
 
             if (!this.error) {

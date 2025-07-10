@@ -157,6 +157,7 @@ class FDBCursor {
             const range = makeKeyRange(this._range, [key, this._position], []);
             const recordsIterator = await records.values(range);
             for (const record of recordsIterator) {
+                if (!record) continue;
                 const cmpResultKey =
                     key !== undefined ? cmp(record.key, key) : undefined;
                 const cmpResultPosition =
@@ -208,6 +209,7 @@ class FDBCursor {
             const range = makeKeyRange(this._range, [key, this._position], []);
             const recordsIterator = await records.values(range);
             for (const record of recordsIterator) {
+                if (!record) continue;
                 if (key !== undefined) {
                     if (cmp(record.key, key) === -1) {
                         continue;
@@ -230,6 +232,7 @@ class FDBCursor {
             const range = makeKeyRange(this._range, [], [key, this._position]);
             const recordsIterator = await records.values(range, "prev");
             for (const record of recordsIterator) {
+                if (!record) continue;
                 const cmpResultKey =
                     key !== undefined ? cmp(record.key, key) : undefined;
                 const cmpResultPosition =
@@ -279,6 +282,7 @@ class FDBCursor {
             const range = makeKeyRange(this._range, [], [key, this._position]);
             const recordsIterator = await records.values(range, "prev");
             for (const record of recordsIterator) {
+                if (!record) continue;
                 if (key !== undefined) {
                     if (cmp(record.key, key) === 1) {
                         continue;

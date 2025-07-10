@@ -132,6 +132,7 @@ class ObjectStore {
         const records = [];
         const values = await this.records.values(range);
         for (const record of values) {
+            if (!record) continue;
             records.push(structuredClone(record.key));
             if (records.length >= count) {
                 break;
@@ -157,6 +158,7 @@ class ObjectStore {
         const records = [];
         const values = await this.records.values(range);
         for (const record of values) {
+            if (!record) continue;
             records.push(structuredClone(record.value));
             if (records.length >= count) {
                 break;

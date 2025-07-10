@@ -60,6 +60,7 @@ class Index {
         const records = [];
         const values = await this.records.values(range);
         for (const record of values) {
+            if (!record) continue;
             records.push(structuredClone(record.value));
             if (records.length >= count) {
                 break;
@@ -87,6 +88,7 @@ class Index {
         const records = [];
         const values = await this.records.values(range);
         for (const record of values) {
+            if (!record) continue;
             records.push(await this.rawObjectStore.getValue(record.value));
             if (records.length >= count) {
                 break;
@@ -178,7 +180,9 @@ class Index {
                     // Create index based on current value of objectstore
                     const values = await this.rawObjectStore.records.values();
                     for (const record of values) {
-                        await this.storeRecord(record);
+                        if (record) {
+                            await this.storeRecord(record);
+                        }
                     }
 
                     this.initialized = true;
