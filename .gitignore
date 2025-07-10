@@ -5,3 +5,13 @@ build
 .vscode
 .direnv
 .devenv
+
+# TypeScript compiled output in src
+src/**/*.js
+src/**/*.d.ts
+src/**/*.js.map
+src/**/*.d.ts.map
+
+# Test output files
+test/*.js
+test/*.d.ts
