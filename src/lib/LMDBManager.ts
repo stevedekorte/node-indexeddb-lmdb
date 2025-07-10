@@ -546,21 +546,58 @@ class LMDBManager {
     }
 
     private async validateConstraints(operations: any[]): Promise<void> {
-        const keysSeen = new Set<string>();
+        const keysToAdd = new Map<string, any[]>(); // Track all add operations by key
+        const keysDeleted = new Set<string>();
+        const keysPut = new Set<string>(); // Track put operations (updates)
         
+        // First pass: categorize all operations
         for (const op of operations) {
             if (!op.key) continue;
             
-            // Check if we're trying to add the same key multiple times in this transaction
-            if (keysSeen.has(op.key)) {
-                this.throwConstraintError(op.key, op.key);
+            if (op.type === 'set' && op.noOverwrite) {
+                // This is an add() operation
+                if (!keysToAdd.has(op.key)) {
+                    keysToAdd.set(op.key, []);
+                }
+                keysToAdd.get(op.key)!.push(op);
+            } else if (op.type === 'set' && !op.noOverwrite) {
+                // This is a put() operation (update)
+                keysPut.add(op.key);
+            } else if (op.type === 'delete') {
+                keysDeleted.add(op.key);
             }
-            keysSeen.add(op.key);
+        }
+        
+        // Second pass: validate add() operations
+        for (const [key, addOps] of keysToAdd) {
+            // Check if we're trying to add the same key multiple times in this transaction
+            if (addOps.length > 1) {
+                this.log(`Constraint violation: Multiple add() for key ${key} in same transaction`);
+                this.throwConstraintError(key, key);
+            }
+            
+            // If the key was deleted in this transaction, adding it back is fine
+            if (keysDeleted.has(key)) {
+                this.log(`Key ${key} was deleted then added in same transaction - allowed`);
+                continue;
+            }
+            
+            // If the key was put (updated) in this transaction, then trying to add it is wrong
+            if (keysPut.has(key)) {
+                this.log(`Constraint violation: Key ${key} was put() then add() in same transaction`);
+                this.throwConstraintError(key, key);
+            }
             
             // Check if the key already exists in the database
-            const existingValue = await this.db.get(op.key);
-            if (existingValue !== undefined) {
-                this.throwConstraintError(op.key, op.key);
+            try {
+                const existingValue = await this.db.get(key);
+                if (existingValue !== undefined) {
+                    this.log(`Constraint violation: add() for existing key ${key}`);
+                    this.throwConstraintError(key, key);
+                }
+            } catch (error) {
+                // If we can't check the database, log it but don't fail
+                this.logError(`Could not check existence of key ${key}:`, error);
             }
         }
     }
@@ -568,10 +605,6 @@ class LMDBManager {
     private throwConstraintError(key: string, originalKey: string): never {
         // Parse the key to determine if it's an object store or index operation
         const parts = key.split('/');
-        
-        // Debug logging to help identify parsing issues
-        console.log(`DEBUG throwConstraintError: key="${key}", parts.length=${parts.length}, parts[0]="${parts[0]}"`);
-        console.log(`DEBUG parts:`, parts);
         
         if (parts[0] === 'object' && parts.length >= 4) {
             // Object store operation: object/db/store/key (key might contain slashes)
@@ -599,8 +632,7 @@ class LMDBManager {
             const errorMessage = `Unexpected constraint violation for non-unique index. Key: ${key}`;
             throw new ConstraintError(errorMessage);
         } else {
-            // Unknown key format - debug info
-            console.log(`DEBUG: Unknown key format - parts[0]="${parts[0]}", length=${parts.length}, expected object with length >= 4 or index with length >= 5`);
+            // Unknown key format
             const errorMessage = `A record with the key "${originalKey}" already exists and cannot be overwritten due to the noOverwrite flag being set. Error Code: UNKNOWN_CONSTRAINT_ERR`;
             throw new ConstraintError(errorMessage);
         }
