@@ -1,6 +1,6 @@
 {
     "name": "node-indexeddb-lmdb",
-    "version": "6.1.0",
+    "version": "6.1.1",
     "description": "A Node.js implementation of the IndexedDB API on top of LMDB",
     "homepage": "https://github.com/stevedekorte/node-indexeddb-lmdb",
     "repository": {

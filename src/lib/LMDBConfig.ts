@@ -53,8 +53,9 @@ export const defaultLMDBConfig: Partial<LMDBConfig> = {
     // Compression (optional)
     compression: true,
     
-    // Enable dupSort for better index performance
-    dupSort: true,
+    // Disable dupSort to allow large values (multi-megabyte)
+    // dupSort is only beneficial for duplicate keys, but limits values to 1978 bytes
+    dupSort: false,
     
     // Page size optimization
     pageSize: 4096,
