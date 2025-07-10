@@ -467,27 +467,52 @@ class LMDBManager {
         }
 
         const results: Array<[string, RecordValue]> = [];
+        const processedKeys = new Set<string>();
         
-        // If start and end are the same, use a point lookup instead of range
-        if (startKey === endKey) {
-            const value = await this.db.get(startKey);
-            if (value !== undefined) {
-                const deserializedValue = deserializeValue(value);
-                
-                // Handle arrays of records (for indexes with multiple values per key)
-                if (Array.isArray(deserializedValue)) {
-                    for (const record of deserializedValue) {
-                        results.push([startKey, record]);
+        // First, check for operations in the current transaction that fall within the range
+        if (context && context.state === 'active' && !context.readOnly) {
+            for (const op of context.operations) {
+                if (op.key && op.key >= startKey && op.key <= endKey) {
+                    processedKeys.add(op.key);
+                    if (op.type === 'set' && op.value) {
+                        // Handle arrays of records (for indexes with multiple values per key)
+                        if (Array.isArray(op.value)) {
+                            for (const record of op.value) {
+                                results.push([op.key, record]);
+                            }
+                        } else {
+                            results.push([op.key, op.value]);
+                        }
                     }
-                } else {
-                    results.push([startKey, deserializedValue]);
+                    // deleted keys are ignored (won't be added to results)
+                }
+            }
+        }
+        
+        // Then get values from LMDB, but skip keys we already processed from the transaction
+        if (startKey === endKey) {
+            // Point lookup
+            if (!processedKeys.has(startKey)) {
+                const value = await this.db.get(startKey);
+                if (value !== undefined) {
+                    const deserializedValue = deserializeValue(value);
+                    
+                    // Handle arrays of records (for indexes with multiple values per key)
+                    if (Array.isArray(deserializedValue)) {
+                        for (const record of deserializedValue) {
+                            results.push([startKey, record]);
+                        }
+                    } else {
+                        results.push([startKey, deserializedValue]);
+                    }
                 }
             }
         } else {
+            // Range lookup
             const cursor = this.db.getRange({ start: startKey, end: endKey });
             
             for (const { key, value } of cursor) {
-                if (typeof key === 'string') {
+                if (typeof key === 'string' && !processedKeys.has(key)) {
                     const deserializedValue = deserializeValue(value);
                     // Handle arrays of records (for indexes with multiple values per key)
                     if (Array.isArray(deserializedValue)) {
@@ -508,6 +533,9 @@ class LMDBManager {
                 endKey,
             });
         }
+        
+        // Sort results by key to maintain proper ordering
+        results.sort((a, b) => a[0].localeCompare(b[0]));
         
         return results;
     }

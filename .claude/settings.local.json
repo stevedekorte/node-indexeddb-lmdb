@@ -37,7 +37,8 @@
       "WebFetch(domain:github.com)",
       "Bash(npm publish:*)",
       "Bash(DB_VERBOSE=1 node test-add-constraint.js)",
-      "Bash(npm view:*)"
+      "Bash(npm view:*)",
+      "Bash(gh release create:*)"
     ],
     "deny": []
   }

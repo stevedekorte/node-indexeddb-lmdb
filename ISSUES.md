@@ -4,11 +4,23 @@ This document tracks known bugs and limitations in the LMDB implementation of In
 
 ## 🎯 Current Status: Production Ready!
 
-**Latest Version**: v6.1.5  
+**Latest Version**: v6.1.6  
 **Test Compatibility**: 100% across all categories  
 **Status**: ✅ Production ready with comprehensive IndexedDB compatibility
 
-## 🟢 Recently Resolved Issues (v6.1.0 - v6.1.5)
+## 🟢 Recently Resolved Issues (v6.1.0 - v6.1.6)
+
+### ✅ Transaction Count() Isolation Bug (v6.1.6) 🔥 CRITICAL FIX
+- **Status**: ✅ Fixed in v6.1.6
+- **Description**: `objectStore.count()` within transactions didn't see pending `add()` operations, causing constraint errors in production
+- **Root Cause**: `LMDBManager.getRange()` only checked LMDB database, ignoring queued transaction operations
+- **Impact**: **This was causing your production constraint errors!** Applications using `count()` to check before `add()` would fail
+- **Solution**: 
+  - Updated `LMDBManager.getRange()` to include queued transaction operations
+  - Added transaction isolation so `count()` sees pending adds/deletes within the same transaction
+  - Maintains proper key ordering and handles both point and range lookups
+- **Browser Compatibility**: Now matches browser IndexedDB behavior exactly - `count()` sees uncommitted changes within transactions
+- **Files**: `LMDBManager.ts`
 
 ### ✅ Key Parsing for Complex Keys (v6.1.5)
 - **Status**: ✅ Fixed in v6.1.5
