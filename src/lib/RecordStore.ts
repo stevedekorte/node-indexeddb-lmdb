@@ -216,8 +216,9 @@ class RecordStore {
     private async getRange(range?: FDBKeyRange): Promise<Record[]> {
         const allRecords: Record[] = [];
         
-        let startKey = this.keyPrefix;
-        let endKey = this.keyPrefix + '\xFF';
+        // Include type prefix in the search keys
+        let startKey = this.type + SEPARATOR + this.keyPrefix;
+        let endKey = this.type + SEPARATOR + this.keyPrefix + '\xFF';
         
         if (range) {
             if (range.lower !== undefined) {

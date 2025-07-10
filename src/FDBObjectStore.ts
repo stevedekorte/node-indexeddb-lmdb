@@ -107,6 +107,9 @@ class FDBObjectStore {
         this.indexNames = new FakeDOMStringList(
             ...Array.from(rawObjectStore.rawIndexes.keys()).sort(),
         );
+        
+        // Set the transaction ID on the raw object store
+        this._rawObjectStore._setTransactionId(transaction._lmdbTxnId);
     }
 
     get name() {

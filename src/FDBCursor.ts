@@ -145,6 +145,13 @@ class FDBCursor {
                 ? this.source._rawObjectStore.records
                 : this.source._rawIndex.records;
 
+        // Ensure the record store has the current transaction ID
+        if (this.source instanceof FDBObjectStore) {
+            this.source._rawObjectStore.records.setTransactionId(this.source.transaction._lmdbTxnId);
+        } else {
+            this.source._rawIndex.records.setTransactionId(this.source.objectStore.transaction._lmdbTxnId);
+        }
+
         let foundRecord;
         if (this.direction === "next") {
             const range = makeKeyRange(this._range, [key, this._position], []);
