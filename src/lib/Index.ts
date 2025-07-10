@@ -19,6 +19,7 @@ class Index {
     public readonly keyPath: KeyPath;
     public multiEntry: boolean;
     public unique: boolean;
+    private _transactionId?: string;
 
     constructor(
         rawObjectStore: ObjectStore,
@@ -37,22 +38,28 @@ class Index {
         this.unique = unique;
         // console.log("IDB|Index constructor,", this.name, this.rawObjectStore.name);
     }
+    
+    public _setTransactionId(txnId: string): void {
+        this._transactionId = txnId;
+        this.records.setTransactionId(txnId);
+    }
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-retrieving-a-value-from-an-index
-    public getKey(key: FDBKeyRange | Key) {
-        const record = this.records.get(key);
+    public async getKey(key: FDBKeyRange | Key) {
+        const record = await this.records.get(key);
 
         return record !== undefined ? record.value : undefined;
     }
 
     // http://w3c.github.io/IndexedDB/#retrieve-multiple-referenced-values-from-an-index
-    public getAllKeys(range: FDBKeyRange, count?: number) {
+    public async getAllKeys(range: FDBKeyRange, count?: number) {
         if (count === undefined || count === 0) {
             count = Infinity;
         }
 
         const records = [];
-        for (const record of this.records.values(range)) {
+        const values = await this.records.values(range);
+        for (const record of values) {
             records.push(structuredClone(record.value));
             if (records.length >= count) {
                 break;
@@ -63,23 +70,24 @@ class Index {
     }
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#index-referenced-value-retrieval-operation
-    public getValue(key: FDBKeyRange | Key) {
-        const record = this.records.get(key);
+    public async getValue(key: FDBKeyRange | Key) {
+        const record = await this.records.get(key);
 
         return record !== undefined
-            ? this.rawObjectStore.getValue(record.value)
+            ? await this.rawObjectStore.getValue(record.value)
             : undefined;
     }
 
     // http://w3c.github.io/IndexedDB/#retrieve-multiple-referenced-values-from-an-index
-    public getAllValues(range: FDBKeyRange, count?: number) {
+    public async getAllValues(range: FDBKeyRange, count?: number) {
         if (count === undefined || count === 0) {
             count = Infinity;
         }
 
         const records = [];
-        for (const record of this.records.values(range)) {
-            records.push(this.rawObjectStore.getValue(record.value));
+        const values = await this.records.values(range);
+        for (const record of values) {
+            records.push(await this.rawObjectStore.getValue(record.value));
             if (records.length >= count) {
                 break;
             }
@@ -89,9 +97,9 @@ class Index {
     }
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-storing-a-record-into-an-object-store (step 7)
-    public storeRecord(newRecord: Record) {
+    public async storeRecord(newRecord: Record): Promise<void> {
         // First remove any existing index entries for this record
-        this.records.deleteByValue(newRecord.key);
+        await this.records.deleteByValue(newRecord.key);
 
         let indexKey;
         try {
@@ -128,21 +136,21 @@ class Index {
 
         if (!this.multiEntry || !Array.isArray(indexKey)) {
             if (this.unique) {
-                const existingRecord = this.records.get(indexKey);
+                const existingRecord = await this.records.get(indexKey);
                 if (existingRecord) {
                     const errorMessage = `A record with the specified key "${indexKey}" already exists in the index, which violates the unique constraint. Key properties: ${JSON.stringify(newRecord.key)}. Error Code: IDX_CONSTRAINT_ERR_001`;
                     console.error("ConstraintError:", errorMessage);
                     throw new ConstraintError(errorMessage);
                 }
             }
-            this.records.add({
+            await this.records.add({
                 key: indexKey,
                 value: newRecord.key,
             });
         } else {
             if (this.unique) {
                 for (const individualIndexKey of indexKey) {
-                    const existingRecord = this.records.get(individualIndexKey);
+                    const existingRecord = await this.records.get(individualIndexKey);
                     if (existingRecord) {
                         const errorMessage = `A record with the specified key "${individualIndexKey}" already exists in the index, which violates the unique constraint. Key properties: ${JSON.stringify(newRecord.key)}. Error Code: IDX_CONSTRAINT_ERR_002`;
                         console.error("ConstraintError:", errorMessage);
@@ -151,7 +159,7 @@ class Index {
                 }
             }
             for (const individualIndexKey of indexKey) {
-                this.records.add({
+                await this.records.add({
                     key: individualIndexKey,
                     value: newRecord.key,
                 });
@@ -165,11 +173,12 @@ class Index {
         }
 
         transaction._execRequestAsync({
-            operation: () => {
+            operation: async () => {
                 try {
                     // Create index based on current value of objectstore
-                    for (const record of this.rawObjectStore.records.values()) {
-                        this.storeRecord(record);
+                    const values = await this.rawObjectStore.records.values();
+                    for (const record of values) {
+                        await this.storeRecord(record);
                     }
 
                     this.initialized = true;
@@ -182,11 +191,12 @@ class Index {
         });
     }
 
-    public count(range: FDBKeyRange) {
+    public async count(range: FDBKeyRange): Promise<number> {
         let count = 0;
 
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        for (const record of this.records.values(range)) {
+        const values = await this.records.values(range);
+        for (const record of values) {
             count += 1;
         }
 

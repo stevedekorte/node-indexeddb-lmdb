@@ -1,4 +1,4 @@
-import dbManager from "../lib/LevelDBManager";
+import dbManager from "../lib/LMDBManager";
 import IDBDatabase from "../FDBDatabase";
 
 interface IDBEvent {

@@ -2,7 +2,7 @@ import FDBDatabase from "../FDBDatabase.js";
 import FDBTransaction from "../FDBTransaction.js";
 import ObjectStore from "./ObjectStore.js";
 import { queueTask } from "./scheduling.js";
-import dbManager from "./LevelDBManager.js";
+import dbManager from "./LMDBManager.js";
 
 // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-database
 class Database {
@@ -32,8 +32,8 @@ class Database {
                 const objectStore = new ObjectStore(
                     this,
                     osName,
-                    osData.keyPath,
-                    osData.autoIncrement,
+                    osData!.keyPath,
+                    osData!.autoIncrement,
                 );
                 this.rawObjectStores.set(osName, objectStore);
             }
@@ -64,7 +64,10 @@ class Database {
                 if (next) {
                     next.addEventListener("complete", this.processTransactions);
                     next.addEventListener("abort", this.processTransactions);
-                    next._start();
+                    next._start().catch(error => {
+                        console.error("Transaction _start error:", error);
+                        next._abort(error.name || "UnknownError");
+                    });
                 }
             }
         });

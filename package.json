@@ -1,14 +1,14 @@
 {
-    "name": "node-indexeddb",
+    "name": "node-indexeddb-lmdb",
     "version": "6.0.2",
-    "description": "Node IndexedDB: a pure JS Node implementation of the IndexedDB API",
-    "homepage": "https://github.com/tylerweitzman/node-indexeddb",
+    "description": "A Node.js implementation of the IndexedDB API on top of LMDB",
+    "homepage": "https://github.com/stevedekorte/node-indexeddb-lmdb",
     "repository": {
         "type": "git",
-        "url": "git://github.com/tylerweitzman/node-indexeddb.git"
+        "url": "git://github.com/stevedekorte/node-indexeddb-lmdb.git"
     },
     "bugs": {
-        "url": "https://github.com/tylerweitzman/node-indexeddb/issues"
+        "url": "https://github.com/stevedekorte/node-indexeddb-lmdb/issues"
     },
     "keywords": [
         "indexeddb",
@@ -30,9 +30,9 @@
             "require": "./build/cjs/index.js"
         },
         "./dbManager": {
-            "types": "./build/types/lib/LevelDBManager.d.ts",
-            "import": "./build/esm/lib/LevelDBManager.js",
-            "require": "./build/cjs/lib/LevelDBManager.js"
+            "types": "./build/types/lib/LMDBManager.d.ts",
+            "import": "./build/esm/lib/LMDBManager.js",
+            "require": "./build/cjs/lib/LMDBManager.js"
         },
         "./auto": {
             "types": "./auto.d.ts",
@@ -164,6 +164,6 @@
         "*.{js,json,ts,cjs,mjs}": "prettier --write"
     },
     "dependencies": {
-        "level": "^8.0.1"
+        "lmdb": "^3.4.1"
     }
 }

@@ -54,12 +54,14 @@ export interface Record {
     value: Key | Value; // For indexes, will be Key. For object stores, will be Value.
 }
 
+export type RecordValue = Record | Record[];
+
 export interface RequestObj {
-    operation: () => void;
+    operation: () => void | Promise<any>;
     request?: FDBRequest | undefined;
     source?: any;
 }
 
-export type RollbackLog = (() => void)[];
+export type RollbackLog = (() => void | Promise<void>)[];
 
 export type TransactionMode = "readonly" | "readwrite" | "versionchange";

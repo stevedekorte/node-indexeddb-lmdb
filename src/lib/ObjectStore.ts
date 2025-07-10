@@ -6,7 +6,7 @@ import Index from "./Index.js";
 import KeyGenerator from "./KeyGenerator.js";
 import RecordStore from "./RecordStore.js";
 import { Key, KeyPath, Record, RollbackLog } from "./types.js";
-import dbManager from "./LevelDBManager.js";
+import dbManager from "./LMDBManager.js";
 import { PathUtils } from "./PathUtils.js";
 // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-object-store
 class ObjectStore {
@@ -18,6 +18,7 @@ class ObjectStore {
     public readonly keyPath: KeyPath | null;
     public readonly autoIncrement: boolean;
     public readonly keyGenerator: KeyGenerator | null;
+    private _transactionId?: string;
 
     constructor(
         rawDatabase: Database,
@@ -70,6 +71,16 @@ class ObjectStore {
         }
     }
 
+    public _setTransactionId(txnId: string): void {
+        this._transactionId = txnId;
+        this.records.setTransactionId(txnId);
+        
+        // Also set transaction ID on all indexes
+        for (const index of this.rawIndexes.values()) {
+            index._setTransactionId(txnId);
+        }
+    }
+
     public async saveStructure() {
         // Get the current database structure
         const dbStructure = dbManager.getDatabaseStructure(
@@ -104,20 +115,21 @@ class ObjectStore {
     }
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-retrieving-a-value-from-an-object-store
-    public getKey(key: FDBKeyRange | Key) {
-        const record = this.records.get(key);
+    public async getKey(key: FDBKeyRange | Key) {
+        const record = await this.records.get(key);
 
         return record !== undefined ? structuredClone(record.key) : undefined;
     }
 
     // http://w3c.github.io/IndexedDB/#retrieve-multiple-keys-from-an-object-store
-    public getAllKeys(range: FDBKeyRange, count?: number) {
+    public async getAllKeys(range: FDBKeyRange, count?: number) {
         if (count === undefined || count === 0) {
             count = Infinity;
         }
 
         const records = [];
-        for (const record of this.records.values(range)) {
+        const values = await this.records.values(range);
+        for (const record of values) {
             records.push(structuredClone(record.key));
             if (records.length >= count) {
                 break;
@@ -128,20 +140,21 @@ class ObjectStore {
     }
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-retrieving-a-value-from-an-object-store
-    public getValue(key: FDBKeyRange | Key) {
-        const record = this.records.get(key);
+    public async getValue(key: FDBKeyRange | Key) {
+        const record = await this.records.get(key);
 
         return record !== undefined ? structuredClone(record.value) : undefined;
     }
 
     // http://w3c.github.io/IndexedDB/#retrieve-multiple-values-from-an-object-store
-    public getAllValues(range: FDBKeyRange, count?: number) {
+    public async getAllValues(range: FDBKeyRange, count?: number) {
         if (count === undefined || count === 0) {
             count = Infinity;
         }
 
         const records = [];
-        for (const record of this.records.values(range)) {
+        const values = await this.records.values(range);
+        for (const record of values) {
             records.push(structuredClone(record.value));
             if (records.length >= count) {
                 break;
@@ -152,11 +165,11 @@ class ObjectStore {
     }
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-storing-a-record-into-an-object-store
-    public storeRecord(
+    public async storeRecord(
         newRecord: Record,
         noOverwrite: boolean,
         rollbackLog?: RollbackLog,
-    ) {
+    ): Promise<Key> {
         if (this.keyPath !== null) {
             const key = extractKey(this.keyPath, newRecord.value);
             if (key !== undefined) {
@@ -218,17 +231,17 @@ class ObjectStore {
             this.keyGenerator.setIfLarger(newRecord.key);
         }
 
-        const existingRecord = this.records.get(newRecord.key);
+        const existingRecord = await this.records.get(newRecord.key);
         if (existingRecord) {
             if (noOverwrite) {
                 const errorMessage = `A record with the key "${newRecord.key}" already exists in the object store and cannot be overwritten due to the noOverwrite flag being set. Error Code: OBJ_STORE_CONSTRAINT_ERR_002`;
                 console.error("ConstraintError:", errorMessage);
                 throw new ConstraintError(errorMessage);
             }
-            this.deleteRecord(newRecord.key, rollbackLog);
+            await this.deleteRecord(newRecord.key, rollbackLog);
         }
 
-        this.records.add(newRecord);
+        await this.records.add(newRecord);
 
         if (rollbackLog) {
             rollbackLog.push(() => {
@@ -247,44 +260,45 @@ class ObjectStore {
     }
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-deleting-records-from-an-object-store
-    public deleteRecord(key: Key, rollbackLog?: RollbackLog) {
-        const deletedRecords = this.records.delete(key);
+    public async deleteRecord(key: Key, rollbackLog?: RollbackLog): Promise<void> {
+        const deletedRecords = await this.records.delete(key);
 
         if (rollbackLog) {
             for (const record of deletedRecords) {
-                rollbackLog.push(() => {
-                    this.storeRecord(record, true);
+                rollbackLog.push(async () => {
+                    await this.storeRecord(record, true);
                 });
             }
         }
 
         for (const rawIndex of this.rawIndexes.values()) {
-            rawIndex.records.deleteByValue(key);
+            await rawIndex.records.deleteByValue(key);
         }
     }
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-clearing-an-object-store
-    public clear(rollbackLog: RollbackLog) {
-        const deletedRecords = this.records.clear();
+    public async clear(rollbackLog: RollbackLog): Promise<void> {
+        const deletedRecords = await this.records.clear();
 
         if (rollbackLog) {
             for (const record of deletedRecords) {
-                rollbackLog.push(() => {
-                    this.storeRecord(record, true);
+                rollbackLog.push(async () => {
+                    await this.storeRecord(record, true);
                 });
             }
         }
 
         for (const rawIndex of this.rawIndexes.values()) {
-            rawIndex.records.clear();
+            await rawIndex.records.clear();
         }
     }
 
-    public count(range: FDBKeyRange) {
+    public async count(range: FDBKeyRange): Promise<number> {
         let count = 0;
 
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        for (const record of this.records.values(range)) {
+        const values = await this.records.values(range);
+        for (const record of values) {
             count += 1;
         }
 

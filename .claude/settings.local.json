@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm install:*)",
+      "Bash(npm install)",
+      "Bash(npm run build:*)",
+      "Bash(rm:*)",
+      "Bash(grep:*)",
+      "Bash(pnpm run:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run test-jest:*)",
+      "Bash(npx jest:*)",
+      "Bash(node:*)",
+      "Bash(npx mocha:*)",
+      "Bash(yarn build)",
+      "Bash(npm install:*)",
+      "Bash(timeout:*)",
+      "Bash(DB_VERBOSE=1 node test-simple-persistence.js)",
+      "Bash(DB_VERBOSE=1 node test-transaction-hang.js)",
+      "Bash(mv:*)",
+      "Bash(DB_VERBOSE=1 node test-transaction-hang.cjs)",
+      "Bash(DB_VERBOSE=1 node test-regular-transaction.cjs)",
+      "Bash(tsx:*)",
+      "WebFetch(domain:www.npmjs.com)",
+      "Bash(gh repo create:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(gtimeout:*)"
+    ],
+    "deny": []
+  }
+}

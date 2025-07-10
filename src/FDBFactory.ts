@@ -1,4 +1,4 @@
-import dbManager from "./lib/LevelDBManager.js";
+import dbManager from "./lib/LMDBManager.js";
 import FDBDatabase from "./FDBDatabase.js";
 import FDBOpenDBRequest from "./FDBOpenDBRequest.js";
 import FDBVersionChangeEvent from "./FDBVersionChangeEvent.js";
@@ -251,15 +251,22 @@ class FDBFactory {
     }
 
     private initializeDatabases() {
-        // check if the cache was already loaded otherwise throw an error
+        // With LMDB, we don't need to pre-load all databases into memory
+        // Databases will be loaded on-demand when opened
+        if (!dbManager.isLoaded) {
+            console.warn("LMDBManager not loaded. Database structures will be loaded on first access.");
+        }
+        
         try {
-            const dbStructures = dbManager.getAllDatabaseStructures();
-            // console.log("Factory dbStructures", dbStructures);
-            for (const [dbName, dbStructure] of Object.entries(dbStructures)) {
-                const db = new Database(dbName, dbStructure.version);
-                this._databases.set(dbName, db);
-                if (process.env.DB_VERBOSE === "1") {
-                    console.log("Set    ", dbName, db);
+            // Only load database structures if already loaded
+            if (dbManager.isLoaded) {
+                const dbStructures = dbManager.getAllDatabaseStructures();
+                for (const [dbName, dbStructure] of Object.entries(dbStructures)) {
+                    const db = new Database(dbName, dbStructure.version);
+                    this._databases.set(dbName, db);
+                    if (process.env.DB_VERBOSE === "1") {
+                        console.log("Set    ", dbName, db);
+                    }
                 }
             }
         } catch (error) {

@@ -136,7 +136,7 @@ class FDBCursor {
     }
 
     // https://w3c.github.io/IndexedDB/#iterate-a-cursor
-    public _iterate(key?: Key, primaryKey?: Key): this | null {
+    public async _iterate(key?: Key, primaryKey?: Key): Promise<this | null> {
         const sourceIsObjectStore = this.source instanceof FDBObjectStore;
 
         // Can't use sourceIsObjectStore because TypeScript
@@ -148,7 +148,8 @@ class FDBCursor {
         let foundRecord;
         if (this.direction === "next") {
             const range = makeKeyRange(this._range, [key, this._position], []);
-            for (const record of records.values(range)) {
+            const recordsIterator = await records.values(range);
+            for (const record of recordsIterator) {
                 const cmpResultKey =
                     key !== undefined ? cmp(record.key, key) : undefined;
                 const cmpResultPosition =
@@ -198,7 +199,8 @@ class FDBCursor {
             // But the performance difference should be small, and that wouldn't work anyway for directions where the
             // value needs to be used (like next and prev).
             const range = makeKeyRange(this._range, [key, this._position], []);
-            for (const record of records.values(range)) {
+            const recordsIterator = await records.values(range);
+            for (const record of recordsIterator) {
                 if (key !== undefined) {
                     if (cmp(record.key, key) === -1) {
                         continue;
@@ -219,7 +221,8 @@ class FDBCursor {
             }
         } else if (this.direction === "prev") {
             const range = makeKeyRange(this._range, [], [key, this._position]);
-            for (const record of records.values(range, "prev")) {
+            const recordsIterator = await records.values(range, "prev");
+            for (const record of recordsIterator) {
                 const cmpResultKey =
                     key !== undefined ? cmp(record.key, key) : undefined;
                 const cmpResultPosition =
@@ -267,7 +270,8 @@ class FDBCursor {
         } else if (this.direction === "prevunique") {
             let tempRecord;
             const range = makeKeyRange(this._range, [], [key, this._position]);
-            for (const record of records.values(range, "prev")) {
+            const recordsIterator = await records.values(range, "prev");
+            for (const record of recordsIterator) {
                 if (key !== undefined) {
                     if (cmp(record.key, key) === 1) {
                         continue;
@@ -288,7 +292,7 @@ class FDBCursor {
             }
 
             if (tempRecord) {
-                foundRecord = records.get(tempRecord.key);
+                foundRecord = await records.get(tempRecord.key);
             }
         }
 
@@ -332,7 +336,7 @@ class FDBCursor {
                         // Can't use sourceIsObjectStore because TypeScript
                         throw new Error("This should never happen");
                     }
-                    const value =
+                    const value = await
                         this.source.objectStore._rawObjectStore.getValue(
                             foundRecord.value,
                         );
@@ -444,10 +448,10 @@ class FDBCursor {
             this._request.readyState = "pending";
         }
         transaction._execRequestAsync({
-            operation: () => {
+            operation: async () => {
                 let result;
                 for (let i = 0; i < count; i++) {
-                    result = this._iterate();
+                    result = await this._iterate();
 
                     // Not sure why this is needed
                     if (!result) {

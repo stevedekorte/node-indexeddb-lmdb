@@ -1,264 +1,262 @@
 import FDBKeyRange from "../FDBKeyRange.js";
-import {
-    getByKey,
-    getByKeyRange,
-    getIndexByKey,
-    getIndexByKeyGTE,
-    getIndexByKeyRange,
-} from "./binarySearch.js";
 import cmp from "./cmp.js";
 import { Key, Record } from "./types.js";
-import dbManager from "./LevelDBManager.js";
+import dbManager from "./LMDBManager.js";
 export type RecordStoreType = "object" | "index" | "";
 import { PathUtils, SEPARATOR } from "./PathUtils.js";
 
 class RecordStore {
-    private records: Record[] = [];
     private keyPrefix: string;
     private type: RecordStoreType;
+    private transactionId?: string;
+    
     constructor(keyPrefix: string, type: RecordStoreType) {
         this.keyPrefix = keyPrefix;
         this.type = type;
-
-        this.loadRecordsFromCache();
+    }
+    
+    public setTransactionId(txnId?: string) {
+        this.transactionId = txnId;
     }
 
-    private loadRecordsFromCache() {
-        if (!dbManager.isLoaded) {
-            throw new Error(
-                "Database not loaded yet. Ensure dbManager.loadCache() is called before creating RecordStore instances.",
-            );
-        }
-        const cachedRecords = dbManager.getValuesForKeysStartingWith(
+    private createFullKey(key: Key): string {
+        return PathUtils.createRecordStoreKeyPath(
             this.keyPrefix,
             this.type,
+            key,
         );
-        this.records = cachedRecords.sort((a, b) => cmp(a.key, b.key));
-        if (this.type === "index" && process.env.DB_VERBOSE === "1") {
-            console.log("INDEX_LOAD", this.keyPrefix, this.records);
-        }
-        // Optionally, remove these records from dbManager's cache to save memory
-        // cachedRecords.forEach(record => {
-        //     dbManager.delete(this.keyPrefix + record.key.toString());
-        // });
     }
 
-    public get(key: Key | FDBKeyRange) {
+    public async get(key: Key | FDBKeyRange): Promise<Record | undefined> {
         if (key instanceof FDBKeyRange) {
-            return getByKeyRange(this.records, key);
+            // For key ranges, we need to do a range query
+            const results = await this.getRange(key);
+            return results[0]; // Return first matching record
         }
-        return getByKey(this.records, key);
+        
+        const fullKey = this.createFullKey(key);
+        const value = await dbManager.get(fullKey, this.transactionId);
+        
+        if (this.type === "index" && Array.isArray(value)) {
+            // For indexes, return the first record if multiple exist
+            return value[0];
+        }
+        
+        return value as Record | undefined;
     }
 
-    public add(newRecord: Record) {
-        let i = getIndexByKeyGTE(this.records, newRecord.key);
-        if (i === -1) {
-            i = this.records.length;
-        } else {
-            while (
-                i < this.records.length &&
-                cmp(this.records[i].key, newRecord.key) === 0
-            ) {
-                if (cmp(this.records[i].value, newRecord.value) !== -1) {
+    public async add(newRecord: Record): Promise<void> {
+        const fullKey = this.createFullKey(newRecord.key);
+        
+        if (this.type === "index") {
+            // For indexes, we need to handle multiple values per key
+            const existingValue = await dbManager.get(fullKey, this.transactionId);
+            let records: Record[] = [];
+            
+            if (existingValue) {
+                records = Array.isArray(existingValue) ? existingValue : [existingValue];
+            }
+            
+            // Add the new record, maintaining sort order by value
+            let inserted = false;
+            for (let i = 0; i < records.length; i++) {
+                if (cmp(records[i].value, newRecord.value) >= 0) {
+                    records.splice(i, 0, newRecord);
+                    inserted = true;
                     break;
                 }
-                i += 1;
             }
-        }
-
-        this.records.splice(i, 0, newRecord);
-
-        // Write-through to dbManager - for index types, write all records with the same key
-        const key = PathUtils.createRecordStoreKeyPath(
-            this.keyPrefix,
-            this.type,
-            newRecord.key,
-        );
-        if (this.type === "index") {
-            const sameKeyRecords = this.records.filter(
-                (r) => r.key === newRecord.key,
-            );
-            dbManager.set(
-                key,
-                sameKeyRecords.length === 1
-                    ? sameKeyRecords[0]
-                    : sameKeyRecords,
+            if (!inserted) {
+                records.push(newRecord);
+            }
+            
+            await dbManager.set(
+                fullKey,
+                records.length === 1 ? records[0] : records,
+                this.transactionId,
             );
         } else {
-            dbManager.set(key, newRecord);
+            // For object stores, just store the record directly
+            await dbManager.set(fullKey, newRecord, this.transactionId);
         }
     }
 
-    public delete(key: Key) {
+    public async delete(key: Key): Promise<Record[]> {
         const deletedRecords: Record[] = [];
-        const isRange = key instanceof FDBKeyRange;
-        while (true) {
-            const idx = isRange
-                ? getIndexByKeyRange(this.records, key)
-                : getIndexByKey(this.records, key);
-            if (idx === -1) {
-                break;
+        
+        if (key instanceof FDBKeyRange) {
+            // Delete all records in the range
+            const startKey = key.lower !== undefined ? this.createFullKey(key.lower) : this.keyPrefix;
+            const endKey = key.upper !== undefined ? this.createFullKey(key.upper) : this.keyPrefix + '\xFF';
+            
+            const entries = await dbManager.getRange(startKey, endKey, this.transactionId);
+            for (const [dbKey, value] of entries) {
+                if (this.matchesKeyRange(dbKey, key)) {
+                    const records = Array.isArray(value) ? value : [value];
+                    deletedRecords.push(...records);
+                    await dbManager.delete(dbKey, this.transactionId);
+                }
             }
-            const deletedRecord = this.records[idx];
-            deletedRecords.push(deletedRecord);
-            this.records.splice(idx, 1);
-
-            // Write-through to dbManager
-            dbManager.delete(this.keyPrefix + deletedRecord.key.toString());
+        } else {
+            // Delete specific key
+            const fullKey = this.createFullKey(key);
+            const value = await dbManager.get(fullKey, this.transactionId);
+            if (value) {
+                const records = Array.isArray(value) ? value : [value];
+                deletedRecords.push(...records);
+                await dbManager.delete(fullKey, this.transactionId);
+            }
         }
+        
         return deletedRecords;
     }
 
-    public deleteByValue(key: Key) {
+    public async deleteByValue(key: Key): Promise<Record[]> {
         const range = key instanceof FDBKeyRange ? key : FDBKeyRange.only(key);
         const deletedRecords: Record[] = [];
-
-        // Track which keys need to be updated in dbManager
-        const affectedKeys = new Set<string>();
-
-        this.records = this.records.filter((record) => {
-            const shouldDelete = range.includes(record.value);
-            if (shouldDelete) {
-                deletedRecords.push(record);
-                // Track this key for dbManager update
-                const dbKey = PathUtils.createRecordStoreKeyPath(
-                    this.keyPrefix,
-                    this.type,
-                    record.key,
-                );
-                affectedKeys.add(dbKey);
+        
+        // Get all records for this store
+        const entries = await dbManager.getRange(
+            this.keyPrefix,
+            this.keyPrefix + '\xFF',
+            this.transactionId
+        );
+        
+        for (const [dbKey, value] of entries) {
+            if (!dbKey.startsWith(this.keyPrefix)) continue;
+            
+            const records = Array.isArray(value) ? value : [value];
+            const remainingRecords: Record[] = [];
+            
+            for (const record of records) {
+                if (range.includes(record.value)) {
+                    deletedRecords.push(record);
+                } else {
+                    remainingRecords.push(record);
+                }
             }
-            return !shouldDelete;
-        });
-
-        // Update dbManager for each affected key
-        for (const dbKey of affectedKeys) {
-            const remainingRecords = this.records.filter(
-                (r) => r.key.toString() === dbKey.split("/").pop(),
-            );
-
+            
             if (remainingRecords.length === 0) {
-                dbManager.delete(dbKey);
-            } else {
-                dbManager.set(
+                await dbManager.delete(dbKey, this.transactionId);
+            } else if (remainingRecords.length < records.length) {
+                await dbManager.set(
                     dbKey,
-                    remainingRecords.length === 1
-                        ? remainingRecords[0]
-                        : remainingRecords,
+                    remainingRecords.length === 1 ? remainingRecords[0] : remainingRecords,
+                    this.transactionId,
                 );
             }
         }
-
+        
         return deletedRecords;
     }
 
-    public clear() {
-        const deletedRecords = this.records.slice();
-        this.records = [];
-
-        // Write-through to dbManager
-        for (const record of deletedRecords) {
-            dbManager.delete(this.keyPrefix + record.key.toString());
+    public async clear(): Promise<Record[]> {
+        const deletedRecords: Record[] = [];
+        
+        // Get all records for this store
+        const entries = await dbManager.getRange(
+            this.keyPrefix,
+            this.keyPrefix + '\xFF',
+            this.transactionId
+        );
+        
+        for (const [dbKey, value] of entries) {
+            if (!dbKey.startsWith(this.keyPrefix)) continue;
+            
+            const records = Array.isArray(value) ? value : [value];
+            deletedRecords.push(...records);
+            await dbManager.delete(dbKey, this.transactionId);
         }
-
+        
         return deletedRecords;
     }
-    public values(range?: FDBKeyRange, direction: "next" | "prev" = "next") {
-        if (process.env.DB_VERBOSE === "1") {
-            console.log("values()", this.keyPrefix, this.records);
+
+    public async getAllRecords(): Promise<Record[]> {
+        const allRecords: Record[] = [];
+        
+        const entries = await dbManager.getRange(
+            this.keyPrefix,
+            this.keyPrefix + '\xFF',
+            this.transactionId
+        );
+        
+        for (const [_, value] of entries) {
+            if (Array.isArray(value)) {
+                allRecords.push(...value);
+            } else if (value) {
+                allRecords.push(value);
+            }
         }
+        
+        return allRecords.sort((a, b) => cmp(a.key, b.key));
+    }
+
+    public async values(range?: FDBKeyRange, direction: "next" | "prev" = "next") {
+        const records = await this.getRange(range);
+        
+        if (direction === "prev") {
+            records.reverse();
+        }
+        
         return {
             [Symbol.iterator]: () => {
-                let i: number;
-                if (direction === "next") {
-                    i = 0;
-                    if (range !== undefined && range.lower !== undefined) {
-                        while (this.records[i] !== undefined) {
-                            const cmpResult = cmp(
-                                this.records[i].key,
-                                range.lower,
-                            );
-                            if (
-                                cmpResult === 1 ||
-                                (cmpResult === 0 && !range.lowerOpen)
-                            ) {
-                                break;
-                            }
-                            i += 1;
-                        }
-                    }
-                } else {
-                    i = this.records.length - 1;
-                    if (range !== undefined && range.upper !== undefined) {
-                        while (this.records[i] !== undefined) {
-                            const cmpResult = cmp(
-                                this.records[i].key,
-                                range.upper,
-                            );
-                            if (
-                                cmpResult === -1 ||
-                                (cmpResult === 0 && !range.upperOpen)
-                            ) {
-                                break;
-                            }
-                            i -= 1;
-                        }
-                    }
-                }
-
+                let i = 0;
                 return {
                     next: () => {
-                        let done;
-                        let value;
-                        if (direction === "next") {
-                            value = this.records[i];
-                            done = i >= this.records.length;
-                            i += 1;
-
-                            if (
-                                !done &&
-                                range !== undefined &&
-                                range.upper !== undefined
-                            ) {
-                                const cmpResult = cmp(value.key, range.upper);
-                                done =
-                                    cmpResult === 1 ||
-                                    (cmpResult === 0 && range.upperOpen);
-                                if (done) {
-                                    value = undefined;
-                                }
-                            }
-                        } else {
-                            value = this.records[i];
-                            done = i < 0;
-                            i -= 1;
-
-                            if (
-                                !done &&
-                                range !== undefined &&
-                                range.lower !== undefined
-                            ) {
-                                const cmpResult = cmp(value.key, range.lower);
-                                done =
-                                    cmpResult === -1 ||
-                                    (cmpResult === 0 && range.lowerOpen);
-                                if (done) {
-                                    value = undefined;
-                                }
-                            }
+                        if (i >= records.length) {
+                            return { done: true, value: undefined };
                         }
-
-                        // The weird "as IteratorResult<Record>" is needed because of
-                        // https://github.com/Microsoft/TypeScript/issues/11375 and
-                        // https://github.com/Microsoft/TypeScript/issues/2983
-                        return {
-                            done,
-                            value,
-                        } as IteratorResult<Record>;
+                        return { done: false, value: records[i++] };
                     },
                 };
             },
         };
+    }
+
+    private async getRange(range?: FDBKeyRange): Promise<Record[]> {
+        const allRecords: Record[] = [];
+        
+        let startKey = this.keyPrefix;
+        let endKey = this.keyPrefix + '\xFF';
+        
+        if (range) {
+            if (range.lower !== undefined) {
+                startKey = this.createFullKey(range.lower);
+            }
+            if (range.upper !== undefined) {
+                endKey = this.createFullKey(range.upper);
+            }
+        }
+        
+        const entries = await dbManager.getRange(startKey, endKey, this.transactionId);
+        
+        for (const [dbKey, value] of entries) {
+            if (!range || this.matchesKeyRange(dbKey, range)) {
+                if (Array.isArray(value)) {
+                    allRecords.push(...value);
+                } else if (value) {
+                    allRecords.push(value);
+                }
+            }
+        }
+        
+        return allRecords.sort((a, b) => cmp(a.key, b.key));
+    }
+
+    private matchesKeyRange(dbKey: string, range: FDBKeyRange): boolean {
+        // Extract the actual key from the full database key
+        const keyParts = dbKey.split(SEPARATOR);
+        const keyStr = keyParts[keyParts.length - 1];
+        
+        // Parse the key back to its original form
+        let key: Key;
+        try {
+            key = JSON.parse(keyStr);
+        } catch {
+            key = keyStr;
+        }
+        
+        return range.includes(key);
     }
 }
 

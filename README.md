@@ -275,19 +275,22 @@ import "fake-indexeddb/auto";
 
 ## Quality
 
+**Note**: The W3C test results below are from the original fake-indexeddb project. The current LMDB version has not been fully tested yet due to circular reference serialization issues that need to be resolved.
+
 Here's a comparison of fake-indexeddb and real browser IndexedDB implementations on [the W3C IndexedDB test suite](https://github.com/w3c/web-platform-tests/tree/master/IndexedDB) as of March 18, 2019:
 
-| Implementation       | Percentage of files that pass completely |
-| -------------------- | ---------------------------------------- |
-| Chrome 73            | 99%                                      |
-| Firefox 65           | 97%                                      |
-| Safari 12            | 92%                                      |
-| fake-indexeddb 3.0.0 | 87%                                      |
-| Edge 18              | 61%                                      |
+| Implementation                | Percentage of files that pass completely |
+| ----------------------------- | ---------------------------------------- |
+| Chrome 73                     | 99%                                      |
+| Firefox 65                    | 97%                                      |
+| Safari 12                     | 92%                                      |
+| fake-indexeddb 3.0.0          | 87%                                      |
+| node-indexeddb-lmdb (current) | *Testing in progress*                    |
+| Edge 18                       | 61%                                      |
 
 For browsers, I ran http://w3c-test.org/tools/runner/index.html and counted the passes. For fake-indexeddb, I ran `npm run test-w3c`.
 
-87% is pretty good, right? Especially considering that fake-indexeddb runs in Node.js where failure is guaranteed for tests involving browser APIs like Web Workers. There are definitley still some weak points of fake-indexeddb, most of which are described in `src/test/web-platform-tests/run-all.js`. Your app will probably run fine, though.
+The original 87% pass rate was pretty good, especially considering that fake-indexeddb runs in Node.js where failure is guaranteed for tests involving browser APIs like Web Workers. The current LMDB version needs the circular reference serialization bug fixed before accurate quality metrics can be obtained.
 
 ## Potential applications:
 

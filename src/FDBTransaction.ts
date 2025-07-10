@@ -17,6 +17,7 @@ import {
     RollbackLog,
     TransactionMode,
 } from "./lib/types.js";
+import dbManager from "./lib/LMDBManager.js";
 
 // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#transaction
 class FDBTransaction extends FakeEventTarget {
@@ -24,6 +25,10 @@ class FDBTransaction extends FakeEventTarget {
     public _started = false;
     public _rollbackLog: RollbackLog = [];
     public _objectStoresCache: Map<string, FDBObjectStore> = new Map();
+    private _lmdbTxnId: string;
+    private _requestQueue: FDBRequest[] = [];
+    private _currentRequestIndex = 0;
+    private _requestResolvers: Map<FDBRequest, () => void> = new Map();
 
     public objectStoreNames: FakeDOMStringList;
     public mode: TransactionMode;
@@ -48,12 +53,28 @@ class FDBTransaction extends FakeEventTarget {
         this.objectStoreNames = new FakeDOMStringList(
             ...Array.from(this._scope).sort(),
         );
+        
+        // Create LMDB transaction (read-only for 'readonly' mode)
+        const readOnly = mode === 'readonly';
+        this._lmdbTxnId = dbManager.beginTransaction(readOnly, storeNames);
     }
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-aborting-a-transaction
-    public _abort(errName: string | null) {
+    public async _abort(errName: string | null) {
+        // Rollback LMDB transaction
+        try {
+            await dbManager.rollbackTransaction(this._lmdbTxnId);
+        } catch (error) {
+            console.error('Failed to rollback LMDB transaction:', error);
+        }
+        
         for (const f of this._rollbackLog.reverse()) {
-            f();
+            if (typeof f === 'function') {
+                const result = f();
+                if (result instanceof Promise) {
+                    await result;
+                }
+            }
         }
 
         if (errName !== null) {
@@ -61,8 +82,8 @@ class FDBTransaction extends FakeEventTarget {
             this.error = e;
         }
 
-        // Should this directly remove from _requests?
-        for (const { request } of this._requests) {
+        // Abort all pending requests
+        for (const request of this._requestQueue) {
             if (request.readyState !== "done") {
                 request.readyState = "done"; // This will cancel execution of this request's operation
                 if (request.source) {
@@ -89,6 +110,15 @@ class FDBTransaction extends FakeEventTarget {
         });
 
         this._state = "finished";
+        
+        // Remove from database transactions list
+        const index = this.db._rawDatabase.transactions.indexOf(this);
+        if (index !== -1) {
+            this.db._rawDatabase.transactions.splice(index, 1);
+        }
+        
+        // Trigger database to process next transaction
+        this.db._rawDatabase.processTransactions();
     }
 
     public abort() {
@@ -97,7 +127,9 @@ class FDBTransaction extends FakeEventTarget {
         }
         this._state = "active";
 
-        this._abort(null);
+        queueTask(async () => {
+            await this._abort(null);
+        });
     }
 
     // http://w3c.github.io/IndexedDB/#dom-idbtransaction-objectstore
@@ -122,6 +154,101 @@ class FDBTransaction extends FakeEventTarget {
         return objectStore2;
     }
 
+    private async _waitForTurn(request: FDBRequest): Promise<void> {
+        return new Promise<void>((resolve) => {
+            // Add request to queue
+            this._requestQueue.push(request);
+            this._requestResolvers.set(request, resolve);
+            
+            // Start processing if this is the first request and not a versionchange transaction
+            // Versionchange transactions are started by Database.processTransactions
+            if (!this._started && this.mode !== "versionchange") {
+                queueTask(() => {
+                    this._processNextRequest();
+                });
+            }
+        });
+    }
+
+    private _processNextRequest() {
+        if (!this._started) {
+            this._started = true;
+            
+            // Pass transaction ID to all object stores in scope
+            for (const storeName of this._scope) {
+                const rawObjectStore = this.db._rawDatabase.rawObjectStores.get(storeName);
+                if (rawObjectStore) {
+                    rawObjectStore._setTransactionId(this._lmdbTxnId);
+                }
+            }
+        }
+        
+        if (process.env.DB_VERBOSE === "1") {
+            console.log(`Processing next request. Queue length: ${this._requestQueue.length}, Current index: ${this._currentRequestIndex}`);
+        }
+
+        // Get the next request in the queue
+        if (this._currentRequestIndex < this._requestQueue.length) {
+            const request = this._requestQueue[this._currentRequestIndex];
+            const resolver = this._requestResolvers.get(request);
+            
+            if (resolver && request.readyState !== "done") {
+                this._currentRequestIndex++;
+                resolver();
+                
+                // Process next request after current one completes
+                queueTask(() => {
+                    this._processNextRequest();
+                });
+            } else {
+                // Skip this request and move to next
+                this._currentRequestIndex++;
+                this._processNextRequest();
+            }
+        } else {
+            // No more requests, check if transaction is complete
+            // For versionchange transactions with no requests, auto-commit
+            if (this.mode === "versionchange" && this._requestQueue.length === 0) {
+                this._state = "committing";
+            }
+            this._checkComplete();
+        }
+    }
+
+    private _checkComplete() {
+        // Check if all requests are done
+        const allDone = this._requestQueue.every(req => req.readyState === "done");
+        
+        if (allDone && this._state !== "finished" && (this._state === "committing" || this._requestQueue.length > 0)) {
+            // Either aborted or committed already
+            this._state = "finished";
+
+            if (!this.error) {
+                queueTask(async () => {
+                    try {
+                        // Commit LMDB transaction
+                        await dbManager.commitTransaction(this._lmdbTxnId);
+                        
+                        const event = new FakeEvent("complete");
+                        this.dispatchEvent(event);
+                        
+                        // Remove from database transactions list
+                        const index = this.db._rawDatabase.transactions.indexOf(this);
+                        if (index !== -1) {
+                            this.db._rawDatabase.transactions.splice(index, 1);
+                        }
+                        
+                        // Trigger database to process next transaction
+                        this.db._rawDatabase.processTransactions();
+                    } catch (error) {
+                        console.error('Failed to commit LMDB transaction:', error);
+                        await this._abort('UnknownError');
+                    }
+                });
+            }
+        }
+    }
+
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-asynchronously-executing-a-request
     public _execRequestAsync(obj: RequestObj) {
         const source = obj.source;
@@ -144,101 +271,84 @@ class FDBTransaction extends FakeEventTarget {
             }
         }
 
-        this._requests.push({
-            operation,
-            request,
+        // Create a promise chain for the async operation
+        const operationPromise = new Promise<any>((resolve, reject) => {
+            // Wait for the transaction to be ready to process this request
+            this._waitForTurn(request).then(async () => {
+                try {
+                    const result = await operation();
+                    resolve(result);
+                } catch (error) {
+                    reject(error);
+                }
+            }).catch(reject);
         });
 
-        return request;
-    }
-
-    public _start() {
-        this._started = true;
-
-        // Remove from request queue - cursor ones will be added back if necessary by cursor.continue and such
-        let operation;
-        let request;
-        while (this._requests.length > 0) {
-            const r = this._requests.shift();
-
-            // This should only be false if transaction was aborted
-            if (r && r.request.readyState !== "done") {
-                request = r.request;
-                operation = r.operation;
-                break;
-            }
-        }
-
-        if (request && operation) {
-            if (!request.source) {
-                // Special requests like indexes that just need to run some code, with error handling already built into
-                // operation
-                operation();
-            } else {
-                let defaultAction;
-                let event;
-                try {
-                    const result = operation();
+        // Handle the promise result asynchronously
+        operationPromise
+            .then((result) => {
+                if (request.readyState !== "done") {
                     request.readyState = "done";
                     request.result = result;
                     request.error = undefined;
 
-                    // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-fire-a-success-event
-                    if (this._state === "inactive") {
-                        this._state = "active";
-                    }
-                    event = new FakeEvent("success", {
-                        bubbles: false,
-                        cancelable: false,
+                    // Fire success event
+                    queueTask(() => {
+                        if (this._state === "inactive") {
+                            this._state = "active";
+                        }
+                        const event = new FakeEvent("success", {
+                            bubbles: false,
+                            cancelable: false,
+                        });
+                        event.eventPath = [this.db, this];
+                        request.dispatchEvent(event);
+                        
+                        // Check if transaction should complete
+                        this._checkComplete();
                     });
-                } catch (err) {
+                }
+            })
+            .catch((error) => {
+                if (request.readyState !== "done") {
                     request.readyState = "done";
                     request.result = undefined;
-                    request.error = err;
+                    request.error = error;
 
-                    // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-fire-an-error-event
-                    if (this._state === "inactive") {
-                        this._state = "active";
-                    }
-                    event = new FakeEvent("error", {
-                        bubbles: true,
-                        cancelable: true,
+                    // Fire error event
+                    queueTask(() => {
+                        if (this._state === "inactive") {
+                            this._state = "active";
+                        }
+                        const event = new FakeEvent("error", {
+                            bubbles: true,
+                            cancelable: true,
+                        });
+                        event.eventPath = [this.db, this];
+                        request.dispatchEvent(event);
+
+                        // Default action: abort transaction if not canceled
+                        if (!event.canceled) {
+                            queueTask(async () => {
+                                await this._abort(error.name);
+                            });
+                        }
                     });
-
-                    defaultAction = this._abort.bind(this, err.name);
                 }
+            });
 
-                try {
-                    event.eventPath = [this.db, this];
-                    request.dispatchEvent(event);
-                } catch (err) {
-                    if (this._state !== "committing") {
-                        this._abort("AbortError");
-                    }
-                    throw err;
-                }
+        return request;
+    }
 
-                // Default action of event
-                if (!event.canceled) {
-                    if (defaultAction) {
-                        defaultAction();
-                    }
-                }
-            }
-
-            // Give it another chance for new handlers to be set before finishing
-            queueTask(this._start.bind(this));
-            return;
-        }
-
-        // Check if transaction complete event needs to be fired
-        if (this._state !== "finished") {
-            // Either aborted or committed already
-            this._state = "finished";
-
-            if (!this.error) {
-                const event = new FakeEvent("complete");
-                this.dispatchEvent(event);
+    // This method is now deprecated but kept for compatibility
+    // The new promise-based approach handles transaction processing
+    public async _start() {
+        // Transaction processing is now handled automatically by _processNextRequest
+        // This method is only called by Database.processTransactions for compatibility
+        if (!this._started) {
+            // For versionchange transactions, we need to start processing here
+            if (this.mode === "versionchange") {
+                this._processNextRequest();
             }
         }
     }
@@ -249,7 +359,13 @@ class FDBTransaction extends FakeEventTarget {
         }
 
         this._state = "committing";
+        
+        // Trigger completion check which will handle the actual commit
+        queueTask(() => {
+            this._checkComplete();
+        });
     }
+
 
     public toString() {
         return "[object IDBRequest]";
