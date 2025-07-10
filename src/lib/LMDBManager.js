@@ -4,6 +4,7 @@ import { SEPARATOR, PathUtils } from "./PathUtils.js";
 import { TransactionManager } from "./TransactionManager.js";
 import { createEnvironmentLMDBConfig } from "./LMDBConfig.js";
 import { serializeValue, deserializeValue } from "./SerializationUtils.js";
+import { ConstraintError } from "./errors.js";
 const DB_VERBOSE = process.env.DB_VERBOSE === "1";
 class LMDBManager {
     static instance;
@@ -98,12 +99,25 @@ class LMDBManager {
             this.log(`Committed transaction ${txnId}`);
             return;
         }
+        // Check for constraint violations (add() operations with duplicate keys)
+        const addOperations = context.operations.filter(op => op.type === 'set' && op.noOverwrite);
+        await this.validateConstraints(addOperations);
         // Execute all write operations in a single LMDB transaction
         try {
             await this.db.transaction(async () => {
                 for (const op of context.operations) {
                     if (op.type === 'set' && op.key) {
                         const serializedValue = serializeValue(op.value);
+                        // Debug key/value size issues if needed
+                        if (op.key.length > 4026) {
+                            console.warn(`LMDB key too long: ${op.key.length} bytes (max 4026)`);
+                            console.warn(`Key: ${op.key.substring(0, 100)}...`);
+                            throw new Error(`Key too long: ${op.key.length} bytes exceeds maximum of 4026 bytes`);
+                        }
+                        // Check for very large values that might cause issues
+                        if (serializedValue.length > 100 * 1024 * 1024) { // 100MB
+                            console.warn(`Large value: ${Math.round(serializedValue.length / 1024 / 1024)}MB`);
+                        }
                         await this.db.put(op.key, serializedValue);
                     }
                     else if (op.type === 'delete' && op.key) {
@@ -156,7 +170,14 @@ class LMDBManager {
             await this.db.put(PathUtils.DB_LIST_KEY, serializeValue(dbList));
         }
         this.databaseStructures.set(db.name, dbStructure);
-        await this.db.put(`${PathUtils.DB_STRUCTURE_KEY}${db.name}`, serializeValue(dbStructure));
+        const structureKey = `${PathUtils.DB_STRUCTURE_KEY}${db.name}`;
+        const serializedStructure = serializeValue(dbStructure);
+        // Debug key size issues
+        if (structureKey.length > 4026) {
+            console.warn(`Database structure key too long: ${structureKey.length} bytes (max 4026)`);
+            console.warn(`Key: ${structureKey.substring(0, 100)}...`);
+        }
+        await this.db.put(structureKey, serializedStructure);
         this.log("Saved database structure", dbStructure);
     }
     getDatabaseStructure(dbName) {
@@ -203,7 +224,7 @@ class LMDBManager {
         }
         return value;
     }
-    async set(key, value, txnId) {
+    async set(key, value, txnId, noOverwrite) {
         this.log("SET", key, value);
         if (!this.isLoaded)
             throw new Error("Database not loaded yet");
@@ -239,6 +260,7 @@ class LMDBManager {
                 type: 'set',
                 key,
                 value,
+                noOverwrite,
             });
             this.log("SET (queued)", key, value);
         }
@@ -418,6 +440,61 @@ class LMDBManager {
     async flushWrites() {
         // LMDB automatically handles write durability
         this.log("LMDB handles write durability automatically");
+    }
+    async validateConstraints(operations) {
+        const keysSeen = new Set();
+        for (const op of operations) {
+            if (!op.key)
+                continue;
+            // Check if we're trying to add the same key multiple times in this transaction
+            if (keysSeen.has(op.key)) {
+                this.throwConstraintError(op.key, op.key);
+            }
+            keysSeen.add(op.key);
+            // Check if the key already exists in the database
+            const existingValue = await this.db.get(op.key);
+            if (existingValue !== undefined) {
+                this.throwConstraintError(op.key, op.key);
+            }
+        }
+    }
+    throwConstraintError(key, originalKey) {
+        // Parse the key to determine if it's an object store or index operation
+        const parts = key.split('/');
+        // Debug logging to help identify parsing issues
+        console.log(`DEBUG throwConstraintError: key="${key}", parts.length=${parts.length}, parts[0]="${parts[0]}"`);
+        console.log(`DEBUG parts:`, parts);
+        if (parts[0] === 'object' && parts.length >= 4) {
+            // Object store operation: object/db/store/key (key might contain slashes)
+            // Rejoin everything after the store name as the actual key
+            const actualKey = parts.slice(3).join('/');
+            const errorMessage = `A record with the key "${actualKey}" already exists in the object store and cannot be overwritten due to the noOverwrite flag being set. Error Code: OBJ_STORE_CONSTRAINT_ERR_002`;
+            throw new ConstraintError(errorMessage);
+        }
+        else if (parts[0] === 'index' && parts.length >= 5) {
+            // Index operation: index/db/store/index/indexKey (indexKey might contain slashes)
+            const [, dbName, storeName, indexName] = parts;
+            const indexKey = parts.slice(4).join('/');
+            // Get the database structure to check if this is a unique index
+            const dbStructure = this.getDatabaseStructure(dbName);
+            if (dbStructure && dbStructure.objectStores[storeName] && dbStructure.objectStores[storeName].indexes[indexName]) {
+                const indexInfo = dbStructure.objectStores[storeName].indexes[indexName];
+                if (indexInfo.unique) {
+                    const errorMessage = `A record with the specified key "${indexKey}" already exists in the index, which violates the unique constraint. Key properties: "${indexKey}". Error Code: IDX_CONSTRAINT_ERR_001`;
+                    throw new ConstraintError(errorMessage);
+                }
+            }
+            // If not a unique index, this shouldn't be a constraint violation
+            // This could happen if there's an issue with our logic
+            const errorMessage = `Unexpected constraint violation for non-unique index. Key: ${key}`;
+            throw new ConstraintError(errorMessage);
+        }
+        else {
+            // Unknown key format - debug info
+            console.log(`DEBUG: Unknown key format - parts[0]="${parts[0]}", length=${parts.length}, expected object with length >= 4 or index with length >= 5`);
+            const errorMessage = `A record with the key "${originalKey}" already exists and cannot be overwritten due to the noOverwrite flag being set. Error Code: UNKNOWN_CONSTRAINT_ERR`;
+            throw new ConstraintError(errorMessage);
+        }
     }
 }
 // Export the instance

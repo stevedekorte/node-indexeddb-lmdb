@@ -99,7 +99,7 @@ class Index {
     }
 
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-storing-a-record-into-an-object-store (step 7)
-    public async storeRecord(newRecord: Record): Promise<void> {
+    public async storeRecord(newRecord: Record, deferConstraints?: boolean): Promise<void> {
         // First remove any existing index entries for this record
         await this.records.deleteByValue(newRecord.key);
 
@@ -137,9 +137,13 @@ class Index {
         }
 
         if (!this.multiEntry || !Array.isArray(indexKey)) {
-            if (this.unique) {
+            // For unique indexes, only check constraints if deferConstraints is true (meaning this is an add() operation)
+            // put() operations (deferConstraints = false) should be allowed to overwrite
+            if (this.unique && deferConstraints) {
                 const existingRecord = await this.records.get(indexKey);
-                if (existingRecord) {
+                if (existingRecord && existingRecord.value !== newRecord.key) {
+                    // Only throw error if the existing record has a different primary key
+                    // Same primary key is allowed (it's just an update)
                     const errorMessage = `A record with the specified key "${indexKey}" already exists in the index, which violates the unique constraint. Key properties: ${JSON.stringify(newRecord.key)}. Error Code: IDX_CONSTRAINT_ERR_001`;
                     console.error("ConstraintError:", errorMessage);
                     throw new ConstraintError(errorMessage);
@@ -148,12 +152,14 @@ class Index {
             await this.records.add({
                 key: indexKey,
                 value: newRecord.key,
-            });
+            }, deferConstraints);
         } else {
-            if (this.unique) {
+            // For multiEntry unique indexes, only check constraints if deferConstraints is true
+            if (this.unique && deferConstraints) {
                 for (const individualIndexKey of indexKey) {
                     const existingRecord = await this.records.get(individualIndexKey);
-                    if (existingRecord) {
+                    if (existingRecord && existingRecord.value !== newRecord.key) {
+                        // Only throw error if the existing record has a different primary key
                         const errorMessage = `A record with the specified key "${individualIndexKey}" already exists in the index, which violates the unique constraint. Key properties: ${JSON.stringify(newRecord.key)}. Error Code: IDX_CONSTRAINT_ERR_002`;
                         console.error("ConstraintError:", errorMessage);
                         throw new ConstraintError(errorMessage);
@@ -164,7 +170,7 @@ class Index {
                 await this.records.add({
                     key: individualIndexKey,
                     value: newRecord.key,
-                });
+                }, deferConstraints);
             }
         }
     }

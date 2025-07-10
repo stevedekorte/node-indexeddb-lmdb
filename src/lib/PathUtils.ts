@@ -1,5 +1,6 @@
 import { RecordStoreType } from "./RecordStore.js";
 import { Key } from "./types.js";
+import { createHash } from "crypto";
 export const SEPARATOR = "/";
 
 export class PathUtils {
@@ -18,7 +19,17 @@ export class PathUtils {
     ): string {
         // Encode keys to preserve IndexedDB ordering in string comparison
         const encodedKey = PathUtils.encodeKey(key);
-        return type + SEPARATOR + keyPrefix + encodedKey;
+        const fullKey = type + SEPARATOR + keyPrefix + encodedKey;
+        
+        // If the key is too long for LMDB (max 4026 bytes), hash it to keep it under limit
+        // while preserving uniqueness
+        if (fullKey.length > 4000) { // Leave some margin
+            const hash = createHash('sha256').update(fullKey).digest('hex');
+            // Prepend hash type and original length for debugging
+            return `hash-${hash}-${fullKey.length}`;
+        }
+        
+        return fullKey;
     }
 
     // Encode a key to preserve natural ordering in string comparison

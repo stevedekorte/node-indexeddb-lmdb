@@ -57,8 +57,9 @@ export const defaultLMDBConfig: Partial<LMDBConfig> = {
     // dupSort is only beneficial for duplicate keys, but limits values to 1978 bytes
     dupSort: false,
     
-    // Page size optimization
-    pageSize: 4096,
+    // Page size optimization - 8192 allows maximum key size of 4026 bytes
+    // Default 4096 limits keys to 1978 bytes which may be insufficient for complex key paths
+    pageSize: 8192,
     
     // Write options
     noMemInit: false,

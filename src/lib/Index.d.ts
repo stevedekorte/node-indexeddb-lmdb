@@ -19,7 +19,7 @@ declare class Index {
     getAllKeys(range: FDBKeyRange, count?: number): Promise<any[]>;
     getValue(key: FDBKeyRange | Key): Promise<any>;
     getAllValues(range: FDBKeyRange, count?: number): Promise<any[]>;
-    storeRecord(newRecord: Record): Promise<void>;
+    storeRecord(newRecord: Record, deferConstraints?: boolean): Promise<void>;
     initialize(transaction: FDBTransaction): void;
     count(range: FDBKeyRange): Promise<number>;
 }

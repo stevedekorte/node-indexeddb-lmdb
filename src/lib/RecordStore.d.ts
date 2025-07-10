@@ -9,7 +9,7 @@ declare class RecordStore {
     setTransactionId(txnId?: string): void;
     private createFullKey;
     get(key: Key | FDBKeyRange): Promise<Record | undefined>;
-    add(newRecord: Record): Promise<void>;
+    add(newRecord: Record, noOverwrite?: boolean): Promise<void>;
     delete(key: Key): Promise<Record[]>;
     deleteByValue(key: Key): Promise<Record[]>;
     clear(): Promise<Record[]>;

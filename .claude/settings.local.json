@@ -30,7 +30,14 @@
       "Bash(gtimeout:*)",
       "Bash(gh run list:*)",
       "Bash(gh run view:*)",
-      "Bash(pnpm test:*)"
+      "Bash(pnpm test:*)",
+      "Bash(git rm:*)",
+      "Bash(true)",
+      "Bash(git checkout:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(npm publish:*)",
+      "Bash(DB_VERBOSE=1 node test-add-constraint.js)",
+      "Bash(npm view:*)"
     ],
     "deny": []
   }

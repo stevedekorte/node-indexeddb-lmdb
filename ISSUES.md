@@ -4,11 +4,56 @@ This document tracks known bugs and limitations in the LMDB implementation of In
 
 ## 🎯 Current Status: Production Ready!
 
-**Latest Version**: v6.1.1  
+**Latest Version**: v6.1.5  
 **Test Compatibility**: 100% across all categories  
 **Status**: ✅ Production ready with comprehensive IndexedDB compatibility
 
-## 🟢 Recently Resolved Issues (v6.1.0 - v6.1.1)
+## 🟢 Recently Resolved Issues (v6.1.0 - v6.1.5)
+
+### ✅ Key Parsing for Complex Keys (v6.1.5)
+- **Status**: ✅ Fixed in v6.1.5
+- **Description**: Constraint error parsing failed for keys containing forward slashes, causing `UNKNOWN_CONSTRAINT_ERR` instead of proper error codes
+- **Root Cause**: Key parsing logic used `split('/')` which broke when keys contained forward slashes (common in Base64-encoded keys)
+- **Solution**: 
+  - Changed parsing logic to use `parts.length >= 4` for object store operations
+  - Use `parts.slice(3).join('/')` to reconstruct keys that may contain slashes
+  - Proper handling of complex key formats while maintaining error code accuracy
+- **Impact**: Now properly identifies and reports object store vs index constraint violations regardless of key content
+- **Files**: `LMDBManager.ts`
+
+### ✅ Unique Index Constraint Timing Compatibility (v6.1.4)
+- **Status**: ✅ Fixed in v6.1.4
+- **Description**: Unique index constraint violations were checked immediately instead of at commit time, causing behavior differences from browser IndexedDB
+- **Root Cause**: Index constraint checking happened when `add()` was called rather than when the transaction commits
+- **Solution**: 
+  - Extended deferred constraint checking to include unique index operations
+  - Modified `Index.storeRecord()` to accept `deferConstraints` parameter
+  - Added index constraint validation to `LMDBManager.commitTransaction()` with proper error messages
+  - Proper key parsing to distinguish between object store and index constraint violations
+- **Impact**: Now matches browser behavior - unique index constraint violations cause transaction abort at commit time
+- **Files**: `Index.ts`, `ObjectStore.ts`, `LMDBManager.ts`
+
+### ✅ IndexedDB add() Transaction Timing Compatibility (v6.1.3)
+- **Status**: ✅ Fixed in v6.1.3
+- **Description**: `add()` operations behaved differently than browser IndexedDB - constraint checking happened immediately instead of at commit time
+- **Root Cause**: Node.js implementation was checking for duplicate keys immediately when `add()` was called, while browsers defer constraint checking until transaction commit
+- **Solution**: 
+  - Implemented deferred constraint checking - `add()` operations are queued and constraints are validated at commit time
+  - Added `noOverwrite` flag to transaction operations to distinguish `add()` from `put()` operations
+  - Constraint violations now properly cause transactions to abort with ConstraintError at commit time
+- **Impact**: Now matches browser IndexedDB behavior exactly - applications can queue multiple operations and constraint errors occur at commit
+- **Files**: `ObjectStore.ts`, `RecordStore.ts`, `LMDBManager.ts`, `TransactionManager.ts`
+
+### ✅ LMDB Key Size Limit and MDB_BAD_VALSIZE Error (v6.1.2)
+- **Status**: ✅ Fixed in v6.1.2
+- **Description**: Error when using large keys or complex key paths: "MDB_BAD_VALSIZE: Unsupported size of key/DB name/data, or wrong DUPFIXED size"
+- **Root Cause**: LMDB's default pageSize of 4096 bytes limited maximum key size to 1978 bytes, insufficient for complex IndexedDB key paths
+- **Solution**: 
+  - Increased pageSize from 4096 to 8192 bytes, allowing keys up to 4026 bytes
+  - Added automatic key hashing fallback using SHA256 for keys > 4000 bytes
+  - Enhanced debugging for size-related issues
+- **Impact**: Can now handle complex key paths and UUID-based keys without size restrictions
+- **Files**: `LMDBConfig.ts`, `PathUtils.ts`, `LMDBManager.ts`
 
 ### ✅ LMDB Large Value Size Limit (v6.1.1)
 - **Status**: ✅ Fixed in v6.1.1
@@ -159,10 +204,14 @@ This document tracks known bugs and limitations in the LMDB implementation of In
 
 ### Installation
 ```bash
-npm install node-indexeddb-lmdb@6.1.1
+npm install node-indexeddb-lmdb@6.1.5
 ```
 
 ### Breaking Changes
+- **v6.1.5**: None (backward compatible fix for key parsing with complex keys)
+- **v6.1.4**: None (backward compatible fix for unique index constraint timing)
+- **v6.1.3**: None (backward compatible fix for add() transaction timing)
+- **v6.1.2**: None (backward compatible fix for key size limits)
 - **v6.1.1**: None (backward compatible fix for large values)
 - **v6.1.0**: None (backward compatible bug fixes)
 

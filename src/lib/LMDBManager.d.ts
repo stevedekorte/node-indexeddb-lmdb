@@ -22,13 +22,15 @@ declare class LMDBManager {
         [dbName: string]: DatabaseStructure;
     };
     get(key: string, txnId?: string): Promise<RecordValue | undefined>;
-    set(key: string, value: RecordValue, txnId?: string): Promise<void>;
+    set(key: string, value: RecordValue, txnId?: string, noOverwrite?: boolean): Promise<void>;
     delete(key: string, txnId?: string): Promise<void>;
     deleteDatabaseStructure(dbName: string): Promise<void>;
     getKeysStartingWith(prefix: string, txnId?: string): Promise<string[]>;
     getValuesForKeysStartingWith(prefix: string, type: RecordStoreType, txnId?: string): Promise<Record[]>;
     getRange(startKey: string, endKey: string, txnId?: string): Promise<Array<[string, RecordValue]>>;
     flushWrites(): Promise<void>;
+    private validateConstraints;
+    private throwConstraintError;
 }
 declare const dbManager: LMDBManager;
 export default dbManager;

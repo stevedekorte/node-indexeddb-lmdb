@@ -45,7 +45,7 @@ class RecordStore {
         return value as Record | undefined;
     }
 
-    public async add(newRecord: Record): Promise<void> {
+    public async add(newRecord: Record, noOverwrite?: boolean): Promise<void> {
         const fullKey = this.createFullKey(newRecord.key);
         
         if (this.type === "index") {
@@ -74,10 +74,11 @@ class RecordStore {
                 fullKey,
                 records.length === 1 ? records[0] : records,
                 this.transactionId,
+                noOverwrite,
             );
         } else {
             // For object stores, just store the record directly
-            await dbManager.set(fullKey, newRecord, this.transactionId);
+            await dbManager.set(fullKey, newRecord, this.transactionId, noOverwrite);
         }
     }
 

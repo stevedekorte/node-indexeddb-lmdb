@@ -6,6 +6,7 @@ export interface TransactionOperation {
     startKey?: string;
     endKey?: string;
     timestamp: number;
+    noOverwrite?: boolean;
 }
 export interface TransactionContext {
     id: string;

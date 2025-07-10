@@ -30,7 +30,7 @@ class RecordStore {
         }
         return value;
     }
-    async add(newRecord) {
+    async add(newRecord, noOverwrite) {
         const fullKey = this.createFullKey(newRecord.key);
         if (this.type === "index") {
             // For indexes, we need to handle multiple values per key
@@ -51,11 +51,11 @@ class RecordStore {
             if (!inserted) {
                 records.push(newRecord);
             }
-            await dbManager.set(fullKey, records.length === 1 ? records[0] : records, this.transactionId);
+            await dbManager.set(fullKey, records.length === 1 ? records[0] : records, this.transactionId, noOverwrite);
         }
         else {
             // For object stores, just store the record directly
-            await dbManager.set(fullKey, newRecord, this.transactionId);
+            await dbManager.set(fullKey, newRecord, this.transactionId, noOverwrite);
         }
     }
     async delete(key) {

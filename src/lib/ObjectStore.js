@@ -1,4 +1,4 @@
-import { ConstraintError, DataError } from "./errors.js";
+import { DataError } from "./errors.js";
 import extractKey from "./extractKey.js";
 import Index from "./Index.js";
 import KeyGenerator from "./KeyGenerator.js";
@@ -174,16 +174,16 @@ class ObjectStore {
             typeof newRecord.key === "number") {
             this.keyGenerator.setIfLarger(newRecord.key);
         }
-        const existingRecord = await this.records.get(newRecord.key);
-        if (existingRecord) {
-            if (noOverwrite) {
-                const errorMessage = `A record with the key "${newRecord.key}" already exists in the object store and cannot be overwritten due to the noOverwrite flag being set. Error Code: OBJ_STORE_CONSTRAINT_ERR_002`;
-                console.error("ConstraintError:", errorMessage);
-                throw new ConstraintError(errorMessage);
+        // For add() operations (noOverwrite=true), defer constraint checking to commit time
+        // to match browser IndexedDB behavior where multiple add() operations with the same key
+        // can be queued within a transaction, with errors thrown at commit time
+        if (!noOverwrite) {
+            const existingRecord = await this.records.get(newRecord.key);
+            if (existingRecord) {
+                await this.deleteRecord(newRecord.key, rollbackLog);
             }
-            await this.deleteRecord(newRecord.key, rollbackLog);
         }
-        await this.records.add(newRecord);
+        await this.records.add(newRecord, noOverwrite);
         if (rollbackLog) {
             rollbackLog.push(() => {
                 this.deleteRecord(newRecord.key);
@@ -192,7 +192,7 @@ class ObjectStore {
         // Update indexes
         for (const rawIndex of this.rawIndexes.values()) {
             if (rawIndex.initialized) {
-                await rawIndex.storeRecord(newRecord);
+                await rawIndex.storeRecord(newRecord, noOverwrite);
             }
         }
         return newRecord.key;

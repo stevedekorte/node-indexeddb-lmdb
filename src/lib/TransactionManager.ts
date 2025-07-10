@@ -7,6 +7,7 @@ export interface TransactionOperation {
     startKey?: string;
     endKey?: string;
     timestamp: number;
+    noOverwrite?: boolean; // For add() operations that should not overwrite existing keys
 }
 
 export interface TransactionContext {
