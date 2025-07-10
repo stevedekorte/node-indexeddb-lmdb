@@ -1,43 +1,65 @@
-# node-indexeddb ![Build Status](https://github.com/dumbmatter/fakeIndexedDB/actions/workflows/test.yml/badge.svg)
+# node-indexeddb-lmdb
 
-This is a pure JS drop-in node.js implementation of [the IndexedDB API](https://w3c.github.io/IndexedDB/). Its main utility is for using IndexedDB-dependent code and packages in Node.js with no headache. The interface is identical to IndexedDB but uses Level under the hood for the actual persistence.
+This is a Node.js implementation of [the IndexedDB API](https://w3c.github.io/IndexedDB/) built on top of LMDB (Lightning Memory-Mapped Database). It allows you to use IndexedDB-dependent code and packages in Node.js with high performance and true persistence.
 
-Note that currently this package is very memory-heavy if the database is large because the entire data is loaded and cached into memory upon initial load.
+## Project History
+
+This project has evolved through several iterations to improve performance and persistence:
+
+1. **[fakeIndexedDB](https://github.com/dumbmatter/fakeIndexedDB)** - The original in-memory implementation for testing and Node.js compatibility
+2. **[node-indexeddb](https://github.com/tylerweitzman/node-indexeddb)** - Added LevelDB persistence but kept a full in-memory cache of all data
+3. **[node-indexeddb-lmdb](https://github.com/stevedekorte/node-indexeddb-lmdb)** - This version uses LMDB for direct data access without caching everything in memory, providing better memory efficiency and performance
+
+## Key Features
+
+- **LMDB Backend**: Uses Lightning Memory-Mapped Database for efficient, persistent storage
+- **Transaction Support**: Implements proper ACID transactions with operation queueing
+- **Memory Efficient**: No in-memory caching - data is read directly from LMDB when needed
+- **Schema Persistence**: Database structures (tables, indexes) are stored and loaded from LMDB
+- **IndexedDB Compatible**: Drop-in replacement for browser IndexedDB API
+- **High Performance**: Memory-mapped files provide fast data access
 
 ## Installation
 
 ```sh
-npm install node-indexeddb
+npm install node-indexeddb-lmdb
 ```
 
-## Use
+## Usage
 
-Functionally, it works exactly like IndexedDB. However, currently it is dependent on synchronous calls to a full in-memory cache of the data. So you must use the following code to init:
+### Basic Setup
 
-```
-async function loadDB() {
-  // Some asynchronous operation
-  await dbManager.loadCache().catch(console.error);
-  // Dynamically import the module
-  await import('node-indexeddb/auto');
-}
-await loadDB();
-```
-
-After the await loadDB() finishes, you can now call IndexedDB in node.js directly as though it was the web API. You must await for loadDB() to finish right now. I am calling await inside of my top-level index.js module to just synchronously wait for the initial load to finish. This requirement should be fixed in the future.
-
-Example code
+Before using IndexedDB, you must initialize the LMDB backend to load database schemas:
 
 ```js
-import dbManager from 'node-indexeddb/dbManager';
-async function loadModule() {
-    // Some asynchronous operation
-    await dbManager.loadCache().catch(console.error);
-    // Dynamically import the module
-    await import('real-indexeddb/auto');
+import dbManager from 'node-indexeddb-lmdb/dbManager';
+
+async function initializeDB() {
+  // Load database structures from LMDB
+  await dbManager.loadCache();
+  // Now you can import and use IndexedDB
+  await import('node-indexeddb-lmdb/auto');
 }
-await loadModule();
-var request = indexedDB.open("test", 3);
+
+await initializeDB();
+// IndexedDB is now available globally
+```
+
+**Important**: `await dbManager.loadCache()` must be called before importing the IndexedDB API. This loads database schemas from LMDB into memory for fast access.
+
+### Complete Example
+
+```js
+import dbManager from 'node-indexeddb-lmdb/dbManager';
+
+async function main() {
+    // Initialize LMDB backend
+    await dbManager.loadCache();
+    // Import IndexedDB API
+    await import('node-indexeddb-lmdb/auto');
+    
+    // Now use IndexedDB normally
+    const request = indexedDB.open("test", 3);
 request.onupgradeneeded = function () {
     var db = request.result;
     console.log("Creating db");
@@ -69,9 +91,12 @@ request.onsuccess = function (event) {
 };
 ```
 
-While you can explicitly import individual IndexedDB variables, I don't recommend doing so until you first import dbManager and wait for `await dbManager.loadCache()` to finish.
+### Direct Imports
+
+You can import IndexedDB components directly, but **always initialize the database first**:
 
 ```js
+import dbManager from 'node-indexeddb-lmdb/dbManager';
 import {
     indexedDB,
     IDBCursor,
@@ -85,59 +110,101 @@ import {
     IDBRequest,
     IDBTransaction,
     IDBVersionChangeEvent,
-} from "node-indexeddb";
+} from "node-indexeddb-lmdb";
 
-// The rest is the same as above.
+// Initialize first!
+await dbManager.loadCache();
+// Now use the imported components
 ```
 
-Like any imported variable, you can rename it if you want, for instance if you don't want to conflict with built-in IndexedDB variables:
+### Renaming Imports
+
+You can rename imports to avoid conflicts:
 
 ```js
 import {
     indexedDB as nodeIndexedDB,
-} from "node-indexeddb";
+} from "node-indexeddb-lmdb";
 ```
 
-The rest of the ReadMe is the original fake-indexeddb readme that this was based on. Don't yet have time to edit it more.
+## Architecture
+
+### LMDB Integration
+
+- **Persistent Storage**: All data is stored in LMDB files on disk
+- **Database Location**: Defaults to `./indexeddb` directory in your project
+- **Schema Loading**: Database structures are loaded once on startup via `loadCache()`
+- **Transaction System**: Uses operation queueing for ACID transactions
+
+### Transaction Behavior
+
+- **Write Operations**: Queued in memory and executed atomically on commit
+- **Read Operations**: Check transaction queue first, then LMDB
+- **Isolation**: Read-your-writes consistency within transactions
+- **Durability**: All committed data is persisted to disk
 
 ### TypeScript
 
 As of version 4, real-indexeddb includes TypeScript types. As you can see in types.d.ts, it's just using TypeScript's built-in IndexedDB types, rather than generating types from the fake-indexeddb code base. The reason I did this is for compatibility with your application code that may already be using TypeScript's IndexedDB types, so if I used something different for fake-indexeddb, it could lead to spurious type errors. In theory this could lead to other errors if there are differences between Typescript's IndexedDB types and fake-indexeddb's API, but currently I'm not aware of any difference. See [issue #23](https://github.com/dumbmatter/fakeIndexedDB/issues/23) for more discussion.
 
-### Dexie and other IndexedDB API wrappers
+### Dexie and Other IndexedDB Wrappers
 
-If you import `fake-indexeddb/auto` before importing `dexie`, it should work:
+Initialize the database before importing wrappers:
 
 ```js
-import "fake-indexeddb/auto";
+import dbManager from 'node-indexeddb-lmdb/dbManager';
+
+// Initialize first
+await dbManager.loadCache();
+// Then import IndexedDB and wrappers
+import "node-indexeddb-lmdb/auto";
 import Dexie from "dexie";
 
 const db = new Dexie("MyDatabase");
 ```
 
-The same likely holds true for other IndexedDB API wrappers like idb.
-
-Alternatively, if you don't want to modify the global scope, then you need to explicitly pass the objects to Dexie:
+For explicit dependency injection:
 
 ```js
+import dbManager from 'node-indexeddb-lmdb/dbManager';
 import Dexie from "dexie";
-import { indexedDB, IDBKeyRange } from "fake-indexeddb";
+import { indexedDB, IDBKeyRange } from "node-indexeddb-lmdb";
 
-const db = new Dexie("MyDatabase", { indexedDB: indexedDB, IDBKeyRange: IDBKeyRange });
+await dbManager.loadCache();
+const db = new Dexie("MyDatabase", { indexedDB, IDBKeyRange });
 ```
 
-### Jest
+### Jest Testing
 
-To use fake-indexeddb in a single Jest test suite, require `fake-indexeddb/auto` at the beginning of the test
-file, as described above.
+For individual test files:
 
-To use it on all Jest tests without having to include it in each file, add the auto setup script to the `setupFiles` in your Jest config:
+```js
+import dbManager from 'node-indexeddb-lmdb/dbManager';
+
+// At the top of your test file
+beforeAll(async () => {
+    await dbManager.loadCache();
+    await import('node-indexeddb-lmdb/auto');
+});
+```
+
+For all tests, create a setup file:
+
+```js
+// jest.setup.js
+import dbManager from 'node-indexeddb-lmdb/dbManager';
+
+export default async function setup() {
+    await dbManager.loadCache();
+    await import('node-indexeddb-lmdb/auto');
+}
+```
+
+Then in your Jest config:
 
 ```json
 {
-    "setupFiles": [
-        "fake-indexeddb/auto"
-    ]
+    "setupFilesAfterEnv": ["<rootDir>/jest.setup.js"]
 }
 ```
 
@@ -183,16 +250,18 @@ module.exports = config;
 
 Hopefully a future version of jsdom will no longer require these workarounds.
 
-### Wiping/resetting the indexedDB for a fresh state
+### Resetting Database State
 
-If you are keeping your tests completely isolated you might want to "reset" the state of the mocked indexedDB. You can do this by creating a new instance of `IDBFactory`, which lets you have a totally fresh start.
+For test isolation, you can reset the database:
 
 ```js
-import "fake-indexeddb/auto";
-import { IDBFactory } from "fake-indexeddb";
+import dbManager from 'node-indexeddb-lmdb/dbManager';
+import { IDBFactory } from "node-indexeddb-lmdb";
 
-// Whenever you want a fresh indexedDB
+// Reset to fresh state
 indexedDB = new IDBFactory();
+// Note: This creates a new in-memory instance
+// For persistent reset, delete the ./indexeddb directory
 ```
 
 ### With PhantomJS and other really old environments
