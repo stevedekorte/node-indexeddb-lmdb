@@ -442,12 +442,36 @@ class LMDBManager {
 
         const results: Array<[string, RecordValue]> = [];
         
-        const cursor = this.db.getRange({ start: startKey, end: endKey });
-        
-        for (const { key, value } of cursor) {
-            if (typeof key === 'string') {
+        // If start and end are the same, use a point lookup instead of range
+        if (startKey === endKey) {
+            const value = await this.db.get(startKey);
+            if (value !== undefined) {
                 const deserializedValue = deserializeValue(value);
-                results.push([key, deserializedValue]);
+                
+                // Handle arrays of records (for indexes with multiple values per key)
+                if (Array.isArray(deserializedValue)) {
+                    for (const record of deserializedValue) {
+                        results.push([startKey, record]);
+                    }
+                } else {
+                    results.push([startKey, deserializedValue]);
+                }
+            }
+        } else {
+            const cursor = this.db.getRange({ start: startKey, end: endKey });
+            
+            for (const { key, value } of cursor) {
+                if (typeof key === 'string') {
+                    const deserializedValue = deserializeValue(value);
+                    // Handle arrays of records (for indexes with multiple values per key)
+                    if (Array.isArray(deserializedValue)) {
+                        for (const record of deserializedValue) {
+                            results.push([key, record]);
+                        }
+                    } else {
+                        results.push([key, deserializedValue]);
+                    }
+                }
             }
         }
         

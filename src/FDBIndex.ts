@@ -43,6 +43,9 @@ class FDBIndex {
         this.keyPath = rawIndex.keyPath;
         this.multiEntry = rawIndex.multiEntry;
         this.unique = rawIndex.unique;
+        
+        // Set the transaction ID on the raw index
+        this._rawIndex._setTransactionId(objectStore.transaction._lmdbTxnId);
     }
 
     get name() {

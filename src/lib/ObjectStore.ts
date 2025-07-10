@@ -82,16 +82,18 @@ class ObjectStore {
     }
 
     public async saveStructure() {
-        // Get the current database structure
-        const dbStructure = dbManager.getDatabaseStructure(
+        // Get the current database structure or create a new one
+        let dbStructure = dbManager.getDatabaseStructure(
             this.rawDatabase.name,
         );
 
         if (!dbStructure) {
-            console.error(
-                `Database structure not found for ${this.rawDatabase.name}`,
-            );
-            return;
+            // Create a new database structure if it doesn't exist
+            dbStructure = {
+                name: this.rawDatabase.name,
+                version: this.rawDatabase.version,
+                objectStores: {},
+            };
         }
 
         // Update or add this object store's structure
@@ -252,7 +254,7 @@ class ObjectStore {
         // Update indexes
         for (const rawIndex of this.rawIndexes.values()) {
             if (rawIndex.initialized) {
-                rawIndex.storeRecord(newRecord);
+                await rawIndex.storeRecord(newRecord);
             }
         }
 
