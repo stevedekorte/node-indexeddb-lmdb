@@ -8,7 +8,7 @@ This project has evolved through several iterations to improve performance and p
 
 1. **[fakeIndexedDB](https://github.com/dumbmatter/fakeIndexedDB)** - The original in-memory implementation for testing and Node.js compatibility
 2. **[node-indexeddb](https://github.com/tylerweitzman/node-indexeddb)** - Added LevelDB persistence but kept a full in-memory cache of all data
-3. **[node-indexeddb-lmdb](https://github.com/stevedekorte/node-indexeddb-lmdb)** - This version uses LMDB for direct data access without caching everything in memory, providing better memory efficiency and performance
+3. **[node-indexeddb-lmdb](https://github.com/stevedekorte/node-indexeddb-lmdb)** - This version uses LMDB for direct data access without caching everything in memory, providing better memory efficiency and performance. **Note**: This version was largely vibe coded with Claude Code and has not been reviewed by Steve Dekorte
 
 ## Key Features
 
