@@ -1,33 +1,21 @@
-import FDBKeyRange from "../FDBKeyRange.js";
-import FDBTransaction from "../FDBTransaction.js";
 import { ConstraintError } from "./errors.js";
 import extractKey from "./extractKey.js";
-import ObjectStore from "./ObjectStore.js";
 import RecordStore from "./RecordStore.js";
-import { Key, KeyPath, Record } from "./types.js";
 import valueToKey from "./valueToKey.js";
-
 // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-index
 class Index {
-    public deleted = false;
+    deleted = false;
     // Initialized should be used to decide whether to throw an error or abort the versionchange transaction when there is a
     // constraint
-    public initialized = false;
-    public readonly rawObjectStore: ObjectStore;
-    public readonly records;
-    public name: string;
-    public readonly keyPath: KeyPath;
-    public multiEntry: boolean;
-    public unique: boolean;
-    private _transactionId?: string;
-
-    constructor(
-        rawObjectStore: ObjectStore,
-        name: string,
-        keyPath: KeyPath,
-        multiEntry: boolean,
-        unique: boolean,
-    ) {
+    initialized = false;
+    rawObjectStore;
+    records;
+    name;
+    keyPath;
+    multiEntry;
+    unique;
+    _transactionId;
+    constructor(rawObjectStore, name, keyPath, multiEntry, unique) {
         this.rawObjectStore = rawObjectStore;
         // this.records.setKeyPrefix(); //is this right? or should the index name not be there?
         this.name = name;
@@ -38,89 +26,80 @@ class Index {
         this.unique = unique;
         // console.log("IDB|Index constructor,", this.name, this.rawObjectStore.name);
     }
-    
-    public _setTransactionId(txnId: string): void {
+    _setTransactionId(txnId) {
         this._transactionId = txnId;
         this.records.setTransactionId(txnId);
     }
-
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-retrieving-a-value-from-an-index
-    public async getKey(key: FDBKeyRange | Key) {
+    async getKey(key) {
         const record = await this.records.get(key);
-
         return record !== undefined ? record.value : undefined;
     }
-
     // http://w3c.github.io/IndexedDB/#retrieve-multiple-referenced-values-from-an-index
-    public async getAllKeys(range: FDBKeyRange, count?: number) {
+    async getAllKeys(range, count) {
         if (count === undefined || count === 0) {
             count = Infinity;
         }
-
         const records = [];
         const values = await this.records.values(range);
         for (const record of values) {
-            if (!record) continue;
+            if (!record)
+                continue;
             records.push(structuredClone(record.value));
             if (records.length >= count) {
                 break;
             }
         }
-
         return records;
     }
-
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#index-referenced-value-retrieval-operation
-    public async getValue(key: FDBKeyRange | Key) {
+    async getValue(key) {
         const record = await this.records.get(key);
-
         return record !== undefined
             ? await this.rawObjectStore.getValue(record.value)
             : undefined;
     }
-
     // http://w3c.github.io/IndexedDB/#retrieve-multiple-referenced-values-from-an-index
-    public async getAllValues(range: FDBKeyRange, count?: number) {
+    async getAllValues(range, count) {
         if (count === undefined || count === 0) {
             count = Infinity;
         }
-
         const records = [];
         const values = await this.records.values(range);
         for (const record of values) {
-            if (!record) continue;
+            if (!record)
+                continue;
             records.push(await this.rawObjectStore.getValue(record.value));
             if (records.length >= count) {
                 break;
             }
         }
-
         return records;
     }
-
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-storing-a-record-into-an-object-store (step 7)
-    public async storeRecord(newRecord: Record): Promise<void> {
+    async storeRecord(newRecord) {
         // First remove any existing index entries for this record
         await this.records.deleteByValue(newRecord.key);
-
         let indexKey;
         try {
             indexKey = extractKey(this.keyPath, newRecord.value);
-        } catch (err) {
+        }
+        catch (err) {
             if (err.name === "DataError") {
                 // Invalid key is not an actual error, just means we do not store an entry in this index
                 return;
             }
             throw err;
         }
-
         if (!this.multiEntry || !Array.isArray(indexKey)) {
             try {
                 valueToKey(indexKey);
-            } catch (e) {
+            }
+            catch (e) {
                 return;
             }
-        } else {
+        }
+        else {
             // remove any elements from index key that are not valid keys and remove any duplicate elements from index
             // key such that only one instance of the duplicate value remains.
             const keep = [];
@@ -128,14 +107,14 @@ class Index {
                 if (keep.indexOf(part) < 0) {
                     try {
                         keep.push(valueToKey(part));
-                    } catch (err) {
+                    }
+                    catch (err) {
                         /* Do nothing */
                     }
                 }
             }
             indexKey = keep;
         }
-
         if (!this.multiEntry || !Array.isArray(indexKey)) {
             if (this.unique) {
                 const existingRecord = await this.records.get(indexKey);
@@ -149,7 +128,8 @@ class Index {
                 key: indexKey,
                 value: newRecord.key,
             });
-        } else {
+        }
+        else {
             if (this.unique) {
                 for (const individualIndexKey of indexKey) {
                     const existingRecord = await this.records.get(individualIndexKey);
@@ -168,12 +148,10 @@ class Index {
             }
         }
     }
-
-    public initialize(transaction: FDBTransaction) {
+    initialize(transaction) {
         if (this.initialized) {
             throw new Error("Index already initialized");
         }
-
         transaction._execRequestAsync({
             operation: async () => {
                 try {
@@ -184,9 +162,9 @@ class Index {
                             await this.storeRecord(record);
                         }
                     }
-
                     this.initialized = true;
-                } catch (err) {
+                }
+                catch (err) {
                     // console.error(err);
                     transaction._abort(err.name);
                 }
@@ -194,18 +172,14 @@ class Index {
             source: null,
         });
     }
-
-    public async count(range: FDBKeyRange): Promise<number> {
+    async count(range) {
         let count = 0;
-
         const values = await this.records.values(range);
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         for (const _record of values) {
             count += 1;
         }
-
         return count;
     }
 }
-
 export default Index;

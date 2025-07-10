@@ -1,0 +1,33 @@
+import FDBRequest from "./FDBRequest.js";
+import { CursorRange, CursorSource, FDBCursorDirection, Key, Value } from "./lib/types.js";
+declare class FDBCursor {
+    _request: FDBRequest | undefined;
+    private _gotValue;
+    private _range;
+    private _position;
+    private _objectStorePosition;
+    private _keyOnly;
+    private _source;
+    private _direction;
+    private _key;
+    private _primaryKey;
+    constructor(source: CursorSource, range: CursorRange, direction?: FDBCursorDirection, request?: FDBRequest, keyOnly?: boolean);
+    get source(): CursorSource;
+    set source(val: CursorSource);
+    get request(): FDBRequest | undefined;
+    set request(val: FDBRequest | undefined);
+    get direction(): FDBCursorDirection;
+    set direction(val: FDBCursorDirection);
+    get key(): undefined;
+    set key(val: undefined);
+    get primaryKey(): any;
+    set primaryKey(val: any);
+    _iterate(key?: Key, primaryKey?: Key): Promise<this | null>;
+    update(value: Value): FDBRequest;
+    advance(count: number): void;
+    continue(key?: Key): void;
+    continuePrimaryKey(key: Key, primaryKey: Key): void;
+    delete(): FDBRequest;
+    toString(): string;
+}
+export default FDBCursor;
