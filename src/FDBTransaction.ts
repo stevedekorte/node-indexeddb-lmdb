@@ -167,6 +167,13 @@ class FDBTransaction extends FakeEventTarget {
                 queueTask(() => {
                     this._processNextRequest();
                 });
+            } else {
+                // If transaction is already started, check if we need to resume processing
+                if (this._started && this._currentRequestIndex >= this._requestQueue.length - 1) {
+                    queueTask(() => {
+                        this._processNextRequest();
+                    });
+                }
             }
         });
     }

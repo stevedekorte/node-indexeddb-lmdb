@@ -226,6 +226,10 @@ class RecordStore {
             }
             if (range.upper !== undefined) {
                 endKey = this.createFullKey(range.upper);
+                // Only extend the end key for true range queries, not point queries
+                if (!range.upperOpen && range.lower !== range.upper) {
+                    endKey = endKey + '\x00'; // Add null byte to make it inclusive
+                }
             }
         }
         
@@ -247,15 +251,10 @@ class RecordStore {
     private matchesKeyRange(dbKey: string, range: FDBKeyRange): boolean {
         // Extract the actual key from the full database key
         const keyParts = dbKey.split(SEPARATOR);
-        const keyStr = keyParts[keyParts.length - 1];
+        const encodedKey = keyParts[keyParts.length - 1];
         
-        // Parse the key back to its original form
-        let key: Key;
-        try {
-            key = JSON.parse(keyStr);
-        } catch {
-            key = keyStr;
-        }
+        // Decode the key back to its original form
+        const key = PathUtils.decodeKey(encodedKey);
         
         return range.includes(key);
     }
