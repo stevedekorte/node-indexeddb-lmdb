@@ -29,6 +29,7 @@ class FDBTransaction extends FakeEventTarget {
     private _requestQueue: FDBRequest[] = [];
     private _currentRequestIndex = 0;
     private _requestResolvers: Map<FDBRequest, () => void> = new Map();
+    private _autoCommitTimer: any = null;
 
     public objectStoreNames: FakeDOMStringList;
     public mode: TransactionMode;
@@ -199,6 +200,10 @@ class FDBTransaction extends FakeEventTarget {
                 // Process next request after current one completes
                 queueTask(() => {
                     this._processNextRequest();
+                    // Also check if we should auto-commit after this request
+                    if (this.mode !== "versionchange") {
+                        this._scheduleAutoCommit();
+                    }
                 });
             } else {
                 // Skip this request and move to next
@@ -206,21 +211,23 @@ class FDBTransaction extends FakeEventTarget {
                 this._processNextRequest();
             }
         } else {
-            // No more requests, check if transaction is complete
-            // For versionchange transactions with no requests, auto-commit
+            // No more requests in queue, but don't auto-commit yet
+            // Transaction should stay active until explicitly committed or execution context ends
             if (this.mode === "versionchange" && this._requestQueue.length === 0) {
+                // Version change transactions commit immediately when empty
                 this._state = "committing";
+                this._checkComplete();
+            } else {
+                // For regular transactions, schedule auto-commit check
+                this._scheduleAutoCommit();
             }
-            this._checkComplete();
         }
     }
 
     private _checkComplete() {
-        // Check if all requests are done
-        const allDone = this._requestQueue.every(req => req.readyState === "done");
-        
-        if (allDone && this._state !== "finished" && (this._state === "committing" || this._requestQueue.length > 0)) {
-            // Either aborted or committed already
+        // Only auto-commit if explicitly in committing state
+        // Normal transactions should only commit when explicitly told to or when scope exits
+        if (this._state === "committing" && this._state !== "finished") {
             this._state = "finished";
 
             if (!this.error) {
@@ -249,6 +256,31 @@ class FDBTransaction extends FakeEventTarget {
         }
     }
 
+    private _scheduleAutoCommit() {
+        // Clear any existing timer
+        if (this._autoCommitTimer) {
+            clearTimeout(this._autoCommitTimer);
+        }
+        
+        // Schedule auto-commit for next tick if no more operations are pending
+        this._autoCommitTimer = setTimeout(() => {
+            if (this._state === "active") {
+                const allRequestsDone = this._requestQueue.every(req => req.readyState === "done");
+                if (allRequestsDone && this._requestQueue.length > 0) {
+                    this._state = "committing";
+                    this._checkComplete();
+                }
+            }
+        }, 0);
+    }
+
+    private _cancelAutoCommit() {
+        if (this._autoCommitTimer) {
+            clearTimeout(this._autoCommitTimer);
+            this._autoCommitTimer = null;
+        }
+    }
+
     // http://www.w3.org/TR/2015/REC-IndexedDB-20150108/#dfn-steps-for-asynchronously-executing-a-request
     public _execRequestAsync(obj: RequestObj) {
         const source = obj.source;
@@ -258,6 +290,9 @@ class FDBTransaction extends FakeEventTarget {
         if (this._state !== "active") {
             throw new TransactionInactiveError();
         }
+
+        // Cancel auto-commit since we're adding a new request
+        this._cancelAutoCommit();
 
         // Request should only be passed for cursors
         if (!request) {
